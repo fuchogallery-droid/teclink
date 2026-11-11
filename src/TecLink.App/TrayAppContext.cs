@@ -12,7 +12,7 @@ public sealed class TrayAppContext : ApplicationContext
     {
         _config = config;
         _clipboard = new ClipboardWatcher();
-        _clipboard.CreateControl(); // force handle creation so AddClipboardFormatListener has something to attach to
+        _ = _clipboard.Handle; // touching Handle forces native window creation (and fires OnLoad) without ever showing it
 
         _bridge = new EdgeBridge(config, _clipboard);
         _bridge.StatusChanged += OnStatusChanged;
@@ -30,7 +30,9 @@ public sealed class TrayAppContext : ApplicationContext
         };
 
         _bridge.InstallHooks();
-        _ = _bridge.RunNetworkingAsync(_cts.Token);
+        _ = _bridge.RunNetworkingAsync(_cts.Token).ContinueWith(
+            t => Logger.LogError(t.Exception),
+            TaskContinuationOptions.OnlyOnFaulted);
     }
 
     private void OnStatusChanged(string status)

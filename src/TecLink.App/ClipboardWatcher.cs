@@ -24,8 +24,6 @@ public sealed class ClipboardWatcher : Form
         Height = 0;
     }
 
-    protected override void SetVisibleCore(bool value) => base.SetVisibleCore(false); // never actually show
-
     protected override void OnLoad(EventArgs e)
     {
         base.OnLoad(e);
