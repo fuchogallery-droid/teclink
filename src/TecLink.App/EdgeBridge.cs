@@ -138,7 +138,7 @@ public sealed class EdgeBridge : IDisposable
             _ = conn.SendAsync(WireMessage.ClipboardTextMsg(text));
     }
 
-    private void OnMouseMove(MouseEventArgs e)
+    private void OnMouseMove(HookMouseEventArgs e)
     {
         if (_mode == BridgeMode.Local)
         {
@@ -174,7 +174,7 @@ public sealed class EdgeBridge : IDisposable
         }
     }
 
-    private void OnMouseButton(MouseEventArgs e)
+    private void OnMouseButton(HookMouseEventArgs e)
     {
         if (_mode != BridgeMode.Remote || _connection is null) return;
         var kind = e.Button switch
@@ -186,7 +186,7 @@ public sealed class EdgeBridge : IDisposable
         _ = _connection.SendAsync(WireMessage.MouseButtonEvent(kind, e.IsDown));
     }
 
-    private void OnMouseWheel(MouseEventArgs e)
+    private void OnMouseWheel(HookMouseEventArgs e)
     {
         if (_mode != BridgeMode.Remote || _connection is null) return;
         _ = _connection.SendAsync(WireMessage.MouseWheelEvent(e.WheelDelta));

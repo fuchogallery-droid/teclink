@@ -4,7 +4,7 @@ namespace TecLink.App.Input;
 
 public enum MouseButton { Left, Right, Middle }
 
-public sealed class MouseEventArgs : EventArgs
+public sealed class HookMouseEventArgs : EventArgs
 {
     public int X { get; init; }
     public int Y { get; init; }
@@ -26,9 +26,9 @@ public sealed class MouseHook : IDisposable
 
     public bool Swallow { get; set; }
 
-    public event Action<MouseEventArgs>? Move;
-    public event Action<MouseEventArgs>? ButtonChanged;
-    public event Action<MouseEventArgs>? Wheel;
+    public event Action<HookMouseEventArgs>? Move;
+    public event Action<HookMouseEventArgs>? ButtonChanged;
+    public event Action<HookMouseEventArgs>? Wheel;
 
     public MouseHook()
     {
@@ -54,29 +54,29 @@ public sealed class MouseHook : IDisposable
             switch (msg)
             {
                 case Win32.WM_MOUSEMOVE:
-                    Move?.Invoke(new MouseEventArgs { X = data.pt.x, Y = data.pt.y });
+                    Move?.Invoke(new HookMouseEventArgs { X = data.pt.x, Y = data.pt.y });
                     break;
                 case Win32.WM_LBUTTONDOWN:
-                    ButtonChanged?.Invoke(new MouseEventArgs { X = data.pt.x, Y = data.pt.y, Button = MouseButton.Left, IsDown = true });
+                    ButtonChanged?.Invoke(new HookMouseEventArgs { X = data.pt.x, Y = data.pt.y, Button = MouseButton.Left, IsDown = true });
                     break;
                 case Win32.WM_LBUTTONUP:
-                    ButtonChanged?.Invoke(new MouseEventArgs { X = data.pt.x, Y = data.pt.y, Button = MouseButton.Left, IsDown = false });
+                    ButtonChanged?.Invoke(new HookMouseEventArgs { X = data.pt.x, Y = data.pt.y, Button = MouseButton.Left, IsDown = false });
                     break;
                 case Win32.WM_RBUTTONDOWN:
-                    ButtonChanged?.Invoke(new MouseEventArgs { X = data.pt.x, Y = data.pt.y, Button = MouseButton.Right, IsDown = true });
+                    ButtonChanged?.Invoke(new HookMouseEventArgs { X = data.pt.x, Y = data.pt.y, Button = MouseButton.Right, IsDown = true });
                     break;
                 case Win32.WM_RBUTTONUP:
-                    ButtonChanged?.Invoke(new MouseEventArgs { X = data.pt.x, Y = data.pt.y, Button = MouseButton.Right, IsDown = false });
+                    ButtonChanged?.Invoke(new HookMouseEventArgs { X = data.pt.x, Y = data.pt.y, Button = MouseButton.Right, IsDown = false });
                     break;
                 case Win32.WM_MBUTTONDOWN:
-                    ButtonChanged?.Invoke(new MouseEventArgs { X = data.pt.x, Y = data.pt.y, Button = MouseButton.Middle, IsDown = true });
+                    ButtonChanged?.Invoke(new HookMouseEventArgs { X = data.pt.x, Y = data.pt.y, Button = MouseButton.Middle, IsDown = true });
                     break;
                 case Win32.WM_MBUTTONUP:
-                    ButtonChanged?.Invoke(new MouseEventArgs { X = data.pt.x, Y = data.pt.y, Button = MouseButton.Middle, IsDown = false });
+                    ButtonChanged?.Invoke(new HookMouseEventArgs { X = data.pt.x, Y = data.pt.y, Button = MouseButton.Middle, IsDown = false });
                     break;
                 case Win32.WM_MOUSEWHEEL:
                     var delta = (short)((data.mouseData >> 16) & 0xFFFF);
-                    Wheel?.Invoke(new MouseEventArgs { X = data.pt.x, Y = data.pt.y, WheelDelta = delta });
+                    Wheel?.Invoke(new HookMouseEventArgs { X = data.pt.x, Y = data.pt.y, WheelDelta = delta });
                     break;
             }
 
