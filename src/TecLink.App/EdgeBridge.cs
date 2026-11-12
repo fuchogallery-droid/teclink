@@ -31,6 +31,11 @@ public sealed class EdgeBridge : IDisposable
     private int _anchorX, _anchorY;
     private int _entryX, _entryY;
 
+    // Tracks keys/buttons we've injected on THIS machine while being remote-controlled,
+    // so a dropped connection mid-keypress doesn't leave them stuck down.
+    private readonly Dictionary<int, bool> _heldKeys = new();
+    private readonly HashSet<MouseButtonKind> _heldButtons = new();
+
     public event Action<string>? StatusChanged;
 
     public EdgeBridge(AppConfig config, ClipboardWatcher clipboard)
@@ -97,6 +102,7 @@ public sealed class EdgeBridge : IDisposable
             StatusChanged?.Invoke("Conexión perdida. Reintentando...");
             _connection = null;
             SwitchToLocal(force: true);
+            ReleaseAllInjectedInput();
             await connection.DisposeAsync();
 
             if (ct.IsCancellationRequested) return;
@@ -118,12 +124,14 @@ public sealed class EdgeBridge : IDisposable
                 InputInjector.MoveTo(msg.X, msg.Y);
                 break;
             case MessageType.MouseButton:
+                if (msg.IsDown) _heldButtons.Add(msg.Button); else _heldButtons.Remove(msg.Button);
                 InputInjector.Button(msg.Button, msg.IsDown);
                 break;
             case MessageType.MouseWheel:
                 InputInjector.Wheel(msg.WheelDelta);
                 break;
             case MessageType.KeyEvent:
+                if (msg.IsDown) _heldKeys[msg.VkCode] = msg.IsExtendedKey; else _heldKeys.Remove(msg.VkCode);
                 InputInjector.Key(msg.VkCode, msg.IsDown, msg.IsExtendedKey);
                 break;
             case MessageType.ClipboardText:
@@ -224,6 +232,15 @@ public sealed class EdgeBridge : IDisposable
             InputInjector.MoveTo(rx, ry);
 
         StatusChanged?.Invoke("Control local");
+    }
+
+    private void ReleaseAllInjectedInput()
+    {
+        foreach (var (vk, extended) in _heldKeys) InputInjector.Key(vk, false, extended);
+        _heldKeys.Clear();
+
+        foreach (var button in _heldButtons) InputInjector.Button(button, false);
+        _heldButtons.Clear();
     }
 
     public void Dispose()
