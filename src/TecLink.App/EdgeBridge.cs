@@ -22,12 +22,17 @@ public sealed class EdgeBridge : IDisposable
     private readonly MouseHook _mouseHook = new();
     private readonly KeyboardHook _keyboardHook = new();
     private readonly ClipboardWatcher _clipboard;
-    private readonly int _localWidth;
-    private readonly int _localHeight;
+
+    // The FULL virtual desktop (every monitor combined), not just the primary one.
+    // Windows puts the primary monitor's top-left at (0,0) and places every other
+    // monitor relative to it — a monitor above or to the left of the primary gets
+    // NEGATIVE coordinates. Edge-crossing must trigger on this rectangle's true outer
+    // edges, never on a hardcoded 0, or it fires constantly while the cursor is just
+    // moving around inside a monitor that happens to sit left/above the primary.
+    private readonly Rectangle _local;
 
     private PeerConnection? _connection;
-    private int _remoteWidth;
-    private int _remoteHeight;
+    private Rectangle _remote;
     private bool _remoteKnown;
 
     private BridgeMode _mode = BridgeMode.Local;
@@ -56,10 +61,7 @@ public sealed class EdgeBridge : IDisposable
     {
         _config = config;
         _clipboard = clipboard;
-
-        var bounds = Screen.PrimaryScreen!.Bounds;
-        _localWidth = bounds.Width;
-        _localHeight = bounds.Height;
+        _local = SystemInformation.VirtualScreen;
 
         _mouseHook.Move += OnMouseMove;
         _mouseHook.ButtonChanged += OnMouseButton;
@@ -110,7 +112,7 @@ public sealed class EdgeBridge : IDisposable
             connection.StartReceiving();
 
             StatusChanged?.Invoke($"Conectado con {_config.PeerHost} — enviando identificación...");
-            await connection.SendAsync(WireMessage.Hello(_config.MachineName, _localWidth, _localHeight));
+            await connection.SendAsync(WireMessage.Hello(_config.MachineName, _local.Left, _local.Top, _local.Width, _local.Height));
 
             await Task.WhenAny(disconnectedTcs.Task, Task.Delay(Timeout.Infinite, ct));
 
@@ -130,10 +132,9 @@ public sealed class EdgeBridge : IDisposable
         switch (msg.Type)
         {
             case MessageType.Hello:
-                _remoteWidth = msg.ScreenWidth;
-                _remoteHeight = msg.ScreenHeight;
+                _remote = new Rectangle(msg.ScreenLeft, msg.ScreenTop, msg.ScreenWidth, msg.ScreenHeight);
                 _remoteKnown = true;
-                StatusChanged?.Invoke($"Vinculado con {msg.MachineName} ({_remoteWidth}x{_remoteHeight})");
+                StatusChanged?.Invoke($"Vinculado con {msg.MachineName} ({_remote.Width}x{_remote.Height})");
                 break;
             case MessageType.MouseMove:
                 InputInjector.MoveTo(msg.X, msg.Y);
@@ -181,34 +182,42 @@ public sealed class EdgeBridge : IDisposable
         {
             if (_connection is null || !_remoteKnown) return;
 
-            var atRightEdge = _config.EdgeToPeer == EdgeDirection.Right && e.X >= _localWidth - 1;
-            var atLeftEdge = _config.EdgeToPeer == EdgeDirection.Left && e.X <= 0;
+            // True outer edges of the WHOLE virtual desktop — never a bare 0, since a
+            // monitor placed above/left of the primary has negative coordinates there.
+            var atRightEdge = _config.EdgeToPeer == EdgeDirection.Right && e.X >= _local.Right - 1;
+            var atLeftEdge = _config.EdgeToPeer == EdgeDirection.Left && e.X <= _local.Left;
             if (!atRightEdge && !atLeftEdge) return;
 
-            var entryX = _config.EdgeToPeer == EdgeDirection.Right ? 0 : _remoteWidth - 1;
-            EngageRemote(e.X, e.Y, entryX, e.Y);
+            // Keep the same relative vertical position when crossing over, even if the
+            // two desktops have different heights/offsets.
+            var verticalFraction = _local.Height > 0 ? (double)(e.Y - _local.Top) / _local.Height : 0;
+            var entryX = _config.EdgeToPeer == EdgeDirection.Right ? _remote.Left : _remote.Right - 1;
+            var entryY = _remote.Top + (int)(verticalFraction * _remote.Height);
+            EngageRemote(e.X, e.Y, entryX, entryY);
         }
         else
         {
             var dx = e.X - _anchorX;
             var dy = e.Y - _anchorY;
             var targetX = _entryX + dx;
-            var targetY = Math.Clamp(_entryY + dy, 0, _remoteHeight - 1);
+            var targetY = Math.Clamp(_entryY + dy, _remote.Top, _remote.Bottom - 1);
 
-            var crossedBackLeft = _config.EdgeToPeer == EdgeDirection.Right && targetX < 0;
-            var crossedBackRight = _config.EdgeToPeer == EdgeDirection.Left && targetX > _remoteWidth - 1;
+            var crossedBackLeft = _config.EdgeToPeer == EdgeDirection.Right && targetX < _remote.Left;
+            var crossedBackRight = _config.EdgeToPeer == EdgeDirection.Left && targetX > _remote.Right - 1;
 
             if (crossedBackLeft || crossedBackRight)
             {
-                var excess = crossedBackLeft ? -targetX : targetX - (_remoteWidth - 1);
+                var excess = crossedBackLeft ? _remote.Left - targetX : targetX - (_remote.Right - 1);
                 var newLocalX = _config.EdgeToPeer == EdgeDirection.Right
-                    ? Math.Clamp(_localWidth - 1 - excess, 0, _localWidth - 1)
-                    : Math.Clamp(excess, 0, _localWidth - 1);
-                SwitchToLocal(newLocalX, targetY);
+                    ? Math.Clamp(_local.Right - 1 - excess, _local.Left, _local.Right - 1)
+                    : Math.Clamp(_local.Left + excess, _local.Left, _local.Right - 1);
+                var verticalFractionBack = _remote.Height > 0 ? (double)(targetY - _remote.Top) / _remote.Height : 0;
+                var newLocalY = Math.Clamp(_local.Top + (int)(verticalFractionBack * _local.Height), _local.Top, _local.Bottom - 1);
+                SwitchToLocal(newLocalX, newLocalY);
                 return;
             }
 
-            _ = _connection!.SendAsync(WireMessage.MouseMove(Math.Clamp(targetX, 0, _remoteWidth - 1), targetY));
+            _ = _connection!.SendAsync(WireMessage.MouseMove(Math.Clamp(targetX, _remote.Left, _remote.Right - 1), targetY));
         }
     }
 
@@ -260,7 +269,7 @@ public sealed class EdgeBridge : IDisposable
         else
         {
             Win32.GetCursorPos(out var pt);
-            EngageRemote(pt.x, pt.y, _remoteWidth / 2, _remoteHeight / 2);
+            EngageRemote(pt.x, pt.y, _remote.Left + _remote.Width / 2, _remote.Top + _remote.Height / 2);
         }
     }
 
@@ -273,8 +282,8 @@ public sealed class EdgeBridge : IDisposable
         _mode = BridgeMode.Remote;
         _anchorX = anchorX;
         _anchorY = anchorY;
-        _entryX = entryX;
-        _entryY = Math.Clamp(entryY, 0, _remoteHeight - 1);
+        _entryX = Math.Clamp(entryX, _remote.Left, _remote.Right - 1);
+        _entryY = Math.Clamp(entryY, _remote.Top, _remote.Bottom - 1);
 
         _mouseHook.Swallow = true;
         _keyboardHook.Swallow = true;

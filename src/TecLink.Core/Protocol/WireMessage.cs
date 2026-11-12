@@ -10,8 +10,13 @@ public sealed class WireMessage
 {
     public MessageType Type { get; init; }
 
-    // Hello
+    // Hello — describes the sender's FULL virtual desktop (all monitors combined),
+    // not just the primary one. Left/Top are the virtual-desktop origin, which is
+    // frequently negative or non-zero once more than one monitor is involved (Windows
+    // places the primary monitor at (0,0) and everything else relative to it).
     public string? MachineName { get; init; }
+    public int ScreenLeft { get; init; }
+    public int ScreenTop { get; init; }
     public int ScreenWidth { get; init; }
     public int ScreenHeight { get; init; }
 
@@ -34,10 +39,12 @@ public sealed class WireMessage
     // ClipboardText
     public string? Text { get; init; }
 
-    public static WireMessage Hello(string machineName, int screenWidth, int screenHeight) => new()
+    public static WireMessage Hello(string machineName, int screenLeft, int screenTop, int screenWidth, int screenHeight) => new()
     {
         Type = MessageType.Hello,
         MachineName = machineName,
+        ScreenLeft = screenLeft,
+        ScreenTop = screenTop,
         ScreenWidth = screenWidth,
         ScreenHeight = screenHeight,
     };
@@ -80,6 +87,8 @@ public sealed class WireMessage
         {
             case MessageType.Hello:
                 w.Write(MachineName ?? "");
+                w.Write(ScreenLeft);
+                w.Write(ScreenTop);
                 w.Write(ScreenWidth);
                 w.Write(ScreenHeight);
                 break;
@@ -125,6 +134,8 @@ public sealed class WireMessage
             {
                 Type = type,
                 MachineName = r.ReadString(),
+                ScreenLeft = r.ReadInt32(),
+                ScreenTop = r.ReadInt32(),
                 ScreenWidth = r.ReadInt32(),
                 ScreenHeight = r.ReadInt32(),
             },
