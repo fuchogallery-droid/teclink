@@ -2,6 +2,8 @@ using TecLink.App.Input;
 using TecLink.App.Native;
 using TecLink.Core.Networking;
 using TecLink.Core.Protocol;
+using TecLink.Core;
+using Microsoft.Win32;
 
 namespace TecLink.App;
 
@@ -22,13 +24,13 @@ public sealed class EdgeBridge : IDisposable
     private readonly MouseHook _mouseHook = new();
     private readonly KeyboardHook _keyboardHook = new();
     private readonly ClipboardWatcher _clipboard;
-    private readonly int _localWidth;
-    private readonly int _localHeight;
+    private volatile DesktopLayout _desktop;
 
     private PeerConnection? _connection;
     private int _remoteWidth;
     private int _remoteHeight;
     private bool _remoteKnown;
+    private volatile bool _peerControlling;
 
     private BridgeMode _mode = BridgeMode.Local;
     private int _anchorX, _anchorY;
@@ -57,9 +59,8 @@ public sealed class EdgeBridge : IDisposable
         _config = config;
         _clipboard = clipboard;
 
-        var bounds = Screen.PrimaryScreen!.Bounds;
-        _localWidth = bounds.Width;
-        _localHeight = bounds.Height;
+        _desktop = CaptureDesktop();
+        SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
 
         _mouseHook.Move += OnMouseMove;
         _mouseHook.ButtonChanged += OnMouseButton;
@@ -110,12 +111,13 @@ public sealed class EdgeBridge : IDisposable
             connection.StartReceiving();
 
             StatusChanged?.Invoke($"Conectado con {_config.PeerHost} — enviando identificación...");
-            await connection.SendAsync(WireMessage.Hello(_config.MachineName, _localWidth, _localHeight));
+            await SendDesktopAsync(connection);
 
             await Task.WhenAny(disconnectedTcs.Task, Task.Delay(Timeout.Infinite, ct));
 
             StatusChanged?.Invoke("Conexión perdida. Reintentando...");
             _connection = null;
+            _peerControlling = false;
             SwitchToLocal(force: true);
             ReleaseAllInjectedInput();
             await connection.DisposeAsync();
@@ -130,13 +132,15 @@ public sealed class EdgeBridge : IDisposable
         switch (msg.Type)
         {
             case MessageType.Hello:
+                if (msg.ScreenWidth <= 0 || msg.ScreenHeight <= 0) break;
                 _remoteWidth = msg.ScreenWidth;
                 _remoteHeight = msg.ScreenHeight;
                 _remoteKnown = true;
                 StatusChanged?.Invoke($"Vinculado con {msg.MachineName} ({_remoteWidth}x{_remoteHeight})");
                 break;
             case MessageType.MouseMove:
-                InputInjector.MoveTo(msg.X, msg.Y);
+                var localPoint = _desktop.FromWire(new Point(msg.X, msg.Y));
+                InputInjector.MoveTo(localPoint.X, localPoint.Y);
                 break;
             case MessageType.MouseButton:
                 if (msg.IsDown) _heldButtons.Add(msg.Button); else _heldButtons.Remove(msg.Button);
@@ -158,10 +162,12 @@ public sealed class EdgeBridge : IDisposable
                 // yield — whoever's "take control" message arrives wins, the other side
                 // backs off automatically instead of both ends fighting over input.
                 if (_mode == BridgeMode.Remote) SwitchToLocal();
+                _peerControlling = true;
                 StatusChanged?.Invoke("La otra PC tomó el mando");
                 ControlChanged?.Invoke("La otra PC tiene el mando");
                 break;
             case MessageType.SwitchToLocal:
+                _peerControlling = false;
                 ReleaseAllInjectedInput(); // defensive: peer says it's done, make sure nothing stayed held here
                 StatusChanged?.Invoke("La otra PC soltó el mando");
                 ControlChanged?.Invoke("Tienes el mando local");
@@ -179,14 +185,14 @@ public sealed class EdgeBridge : IDisposable
     {
         if (_mode == BridgeMode.Local)
         {
-            if (_connection is null || !_remoteKnown) return;
-
-            var atRightEdge = _config.EdgeToPeer == EdgeDirection.Right && e.X >= _localWidth - 1;
-            var atLeftEdge = _config.EdgeToPeer == EdgeDirection.Left && e.X <= 0;
-            if (!atRightEdge && !atLeftEdge) return;
+            if (_connection is null || !_remoteKnown || _peerControlling) return;
+            var desktop = _desktop;
+            if (!desktop.IsExitEdge(new Point(e.X, e.Y), _config.EdgeToPeer == EdgeDirection.Right)) return;
 
             var entryX = _config.EdgeToPeer == EdgeDirection.Right ? 0 : _remoteWidth - 1;
-            EngageRemote(e.X, e.Y, entryX, e.Y);
+            var localY = desktop.ToWire(new Point(e.X, e.Y)).Y;
+            var entryY = (int)((long)localY * (_remoteHeight - 1) / Math.Max(1, desktop.Bounds.Height - 1));
+            EngageRemote(e.X, e.Y, entryX, entryY);
         }
         else
         {
@@ -201,10 +207,9 @@ public sealed class EdgeBridge : IDisposable
             if (crossedBackLeft || crossedBackRight)
             {
                 var excess = crossedBackLeft ? -targetX : targetX - (_remoteWidth - 1);
-                var newLocalX = _config.EdgeToPeer == EdgeDirection.Right
-                    ? Math.Clamp(_localWidth - 1 - excess, 0, _localWidth - 1)
-                    : Math.Clamp(excess, 0, _localWidth - 1);
-                SwitchToLocal(newLocalX, targetY);
+                var newLocalX = _anchorX + (_config.EdgeToPeer == EdgeDirection.Right ? -excess : excess);
+                var resume = _desktop.Clamp(new Point(newLocalX, _anchorY + dy));
+                SwitchToLocal(resume.X, resume.Y);
                 return;
             }
 
@@ -270,6 +275,7 @@ public sealed class EdgeBridge : IDisposable
     /// screen center.</summary>
     private void EngageRemote(int anchorX, int anchorY, int entryX, int entryY)
     {
+        _peerControlling = false;
         _mode = BridgeMode.Remote;
         _anchorX = anchorX;
         _anchorY = anchorY;
@@ -333,8 +339,28 @@ public sealed class EdgeBridge : IDisposable
         _sentHeldButtons.Clear();
     }
 
+    private static DesktopLayout CaptureDesktop() => new(Screen.AllScreens.Select(s => s.Bounds));
+
+    private Task SendDesktopAsync(PeerConnection connection)
+    {
+        var bounds = _desktop.Bounds;
+        return connection.SendAsync(WireMessage.Hello(_config.MachineName, bounds.Width, bounds.Height));
+    }
+
+    private void OnDisplaySettingsChanged(object? sender, EventArgs e)
+    {
+        if (_clipboard.IsDisposed) return;
+        _clipboard.BeginInvoke(() =>
+        {
+            SwitchToLocal(force: true);
+            _desktop = CaptureDesktop();
+            if (_connection is { } connection) _ = SendDesktopAsync(connection);
+        });
+    }
+
     public void Dispose()
     {
+        SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         _mouseHook.Dispose();
         _keyboardHook.Dispose();
     }

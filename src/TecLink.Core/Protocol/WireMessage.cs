@@ -15,7 +15,8 @@ public sealed class WireMessage
     public int ScreenWidth { get; init; }
     public int ScreenHeight { get; init; }
 
-    // MouseMove (absolute coordinates in the receiver's screen space)
+    // MouseMove (coordinates relative to the receiver's virtual desktop origin).
+    // A single monitor at (0,0) retains the v0.2.0 representation.
     public int X { get; init; }
     public int Y { get; init; }
 
