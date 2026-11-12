@@ -16,8 +16,12 @@ public sealed class TrayAppContext : ApplicationContext
 
         _bridge = new EdgeBridge(config, _clipboard);
         _bridge.StatusChanged += OnStatusChanged;
+        _bridge.ControlChanged += OnControlChanged;
 
         var menu = new ContextMenuStrip();
+        menu.Items.Add("Pasar mando a la otra PC", null, (_, _) => _bridge.ToggleControl());
+        menu.Items.Add("Tomar mando aquí", null, (_, _) => _bridge.ToggleControl());
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Reconfigurar...", null, (_, _) => Reconfigure());
         menu.Items.Add("Salir", null, (_, _) => ExitApp());
 
@@ -43,6 +47,11 @@ public sealed class TrayAppContext : ApplicationContext
             var text = "TecLink — " + status;
             _trayIcon.Text = text.Length > 127 ? text[..127] : text; // NotifyIcon.Text has a 127-char limit
         });
+    }
+
+    private void OnControlChanged(string message)
+    {
+        _clipboard.BeginInvoke(() => _trayIcon.ShowBalloonTip(1500, "TecLink", message, ToolTipIcon.Info));
     }
 
     private void Reconfigure()

@@ -1,4 +1,5 @@
 using TecLink.App.Input;
+using TecLink.App.Native;
 using TecLink.Core.Networking;
 using TecLink.Core.Protocol;
 
@@ -8,10 +9,12 @@ public enum BridgeMode { Local, Remote }
 
 /// <summary>
 /// Ties the local hooks, the peer connection and the clipboard watcher together and
-/// implements the edge-crossing state machine: while in <see cref="BridgeMode.Local"/>
-/// input behaves normally; crossing the configured screen edge swallows local input,
-/// tracks displacement from the crossing point, and forwards mapped coordinates to the
-/// peer until the (virtual) cursor crosses back.
+/// implements the control-handoff state machine. Control can change hands two ways:
+/// crossing the configured screen edge with the mouse (continuous, position-based), or
+/// pressing the global hotkey (Ctrl+Alt+Space) to jump straight to the center of the
+/// other screen. Either side can always take control back with the hotkey, even while
+/// the peer currently holds it — see <see cref="OnMessageReceived"/>'s handling of
+/// <see cref="MessageType.SwitchToRemote"/> for how that handoff is negotiated.
 /// </summary>
 public sealed class EdgeBridge : IDisposable
 {
@@ -31,12 +34,23 @@ public sealed class EdgeBridge : IDisposable
     private int _anchorX, _anchorY;
     private int _entryX, _entryY;
 
-    // Tracks keys/buttons we've injected on THIS machine while being remote-controlled,
-    // so a dropped connection mid-keypress doesn't leave them stuck down.
+    // Tracks keys/buttons we've injected on THIS machine because the peer is controlling
+    // us, so a dropped connection (or the peer handing control back) mid-keypress doesn't
+    // leave them stuck down.
     private readonly Dictionary<int, bool> _heldKeys = new();
     private readonly HashSet<MouseButtonKind> _heldButtons = new();
 
+    // The mirror image: keys/buttons WE'VE forwarded to the peer while controlling them,
+    // so handing control back (voluntarily or because the peer took it) releases them on
+    // the peer's end instead of leaving them stuck there.
+    private readonly Dictionary<int, bool> _sentHeldKeys = new();
+    private readonly HashSet<MouseButtonKind> _sentHeldButtons = new();
+
     public event Action<string>? StatusChanged;
+
+    /// <summary>Fires only on an actual control handoff (not on every connection status
+    /// update) — meant for a brief, user-visible notice (tray balloon).</summary>
+    public event Action<string>? ControlChanged;
 
     public EdgeBridge(AppConfig config, ClipboardWatcher clipboard)
     {
@@ -51,6 +65,7 @@ public sealed class EdgeBridge : IDisposable
         _mouseHook.ButtonChanged += OnMouseButton;
         _mouseHook.Wheel += OnMouseWheel;
         _keyboardHook.KeyEvent += OnKeyEvent;
+        _keyboardHook.HotkeyToggle += ToggleControl;
         _clipboard.TextCopied += OnLocalClipboardCopied;
     }
 
@@ -137,6 +152,20 @@ public sealed class EdgeBridge : IDisposable
             case MessageType.ClipboardText:
                 _clipboard.ApplyRemoteText(msg.Text ?? "");
                 break;
+            case MessageType.SwitchToRemote:
+                // The peer just started controlling us. If we were ALSO currently
+                // controlling them (both pressed the hotkey near-simultaneously), we
+                // yield — whoever's "take control" message arrives wins, the other side
+                // backs off automatically instead of both ends fighting over input.
+                if (_mode == BridgeMode.Remote) SwitchToLocal();
+                StatusChanged?.Invoke("La otra PC tomó el mando");
+                ControlChanged?.Invoke("La otra PC tiene el mando");
+                break;
+            case MessageType.SwitchToLocal:
+                ReleaseAllInjectedInput(); // defensive: peer says it's done, make sure nothing stayed held here
+                StatusChanged?.Invoke("La otra PC soltó el mando");
+                ControlChanged?.Invoke("Tienes el mando local");
+                break;
         }
     }
 
@@ -156,7 +185,8 @@ public sealed class EdgeBridge : IDisposable
             var atLeftEdge = _config.EdgeToPeer == EdgeDirection.Left && e.X <= 0;
             if (!atRightEdge && !atLeftEdge) return;
 
-            SwitchToRemote(e.X, e.Y);
+            var entryX = _config.EdgeToPeer == EdgeDirection.Right ? 0 : _remoteWidth - 1;
+            EngageRemote(e.X, e.Y, entryX, e.Y);
         }
         else
         {
@@ -191,6 +221,7 @@ public sealed class EdgeBridge : IDisposable
             MouseButton.Right => MouseButtonKind.Right,
             _ => MouseButtonKind.Middle,
         };
+        if (e.IsDown) _sentHeldButtons.Add(kind); else _sentHeldButtons.Remove(kind);
         _ = _connection.SendAsync(WireMessage.MouseButtonEvent(kind, e.IsDown));
     }
 
@@ -203,27 +234,61 @@ public sealed class EdgeBridge : IDisposable
     private void OnKeyEvent(KeyEventArgsLite e)
     {
         if (_mode != BridgeMode.Remote || _connection is null) return;
+        if (e.IsDown) _sentHeldKeys[e.VkCode] = e.IsExtended; else _sentHeldKeys.Remove(e.VkCode);
         _ = _connection.SendAsync(WireMessage.KeyEventMsg(e.VkCode, e.ScanCode, e.IsDown, e.IsExtended));
     }
 
-    private void SwitchToRemote(int atX, int atY)
+    /// <summary>Flips who's in control. Driven by the global hotkey (Ctrl+Alt+Space,
+    /// recognized and fully consumed inside <see cref="KeyboardHook"/> itself — it never
+    /// reaches a local app and is never forwarded as a KeyEvent, so the two PCs can't
+    /// bounce control back and forth on one press) and by the tray menu's two entries.
+    /// Works even if the peer currently controls us: taking control always wins, the
+    /// peer is forced to yield (see the <see cref="MessageType.SwitchToRemote"/> case in
+    /// <see cref="OnMessageReceived"/>).</summary>
+    public void ToggleControl()
+    {
+        if (_connection is null || !_remoteKnown)
+        {
+            StatusChanged?.Invoke("Atajo presionado, pero no hay conexión con la otra PC todavía");
+            return;
+        }
+
+        if (_mode == BridgeMode.Remote)
+        {
+            SwitchToLocal();
+        }
+        else
+        {
+            Win32.GetCursorPos(out var pt);
+            EngageRemote(pt.x, pt.y, _remoteWidth / 2, _remoteHeight / 2);
+        }
+    }
+
+    /// <summary>Core entry into Remote mode: anchor is where OUR cursor currently is (used
+    /// to translate further movement into deltas), entry is where the peer's cursor should
+    /// land. Edge-crossing passes an edge-aligned entry; the hotkey passes the peer's
+    /// screen center.</summary>
+    private void EngageRemote(int anchorX, int anchorY, int entryX, int entryY)
     {
         _mode = BridgeMode.Remote;
-        _anchorX = atX;
-        _anchorY = atY;
-        _entryX = _config.EdgeToPeer == EdgeDirection.Right ? 0 : _remoteWidth - 1;
-        _entryY = Math.Clamp(atY, 0, _remoteHeight - 1);
+        _anchorX = anchorX;
+        _anchorY = anchorY;
+        _entryX = entryX;
+        _entryY = Math.Clamp(entryY, 0, _remoteHeight - 1);
 
         _mouseHook.Swallow = true;
         _keyboardHook.Swallow = true;
 
+        _ = _connection!.SendAsync(WireMessage.SwitchToRemote());
         _ = _connection!.SendAsync(WireMessage.MouseMove(_entryX, _entryY));
         StatusChanged?.Invoke("Controlando la PC remota");
+        ControlChanged?.Invoke("Tomaste el mando de la otra PC");
     }
 
     private void SwitchToLocal(int? resumeX = null, int? resumeY = null, bool force = false)
     {
         if (_mode == BridgeMode.Local && !force) return;
+        var wasRemote = _mode == BridgeMode.Remote;
         _mode = BridgeMode.Local;
         _mouseHook.Swallow = false;
         _keyboardHook.Swallow = false;
@@ -231,9 +296,18 @@ public sealed class EdgeBridge : IDisposable
         if (resumeX is int rx && resumeY is int ry)
             InputInjector.MoveTo(rx, ry);
 
+        if (wasRemote)
+            ReleaseAllRemoteHeldInput();
+
+        if (_connection is { } conn)
+            _ = conn.SendAsync(WireMessage.SwitchToLocal());
+
         StatusChanged?.Invoke("Control local");
+        ControlChanged?.Invoke("Tienes el mando local");
     }
 
+    /// <summary>Releases (on ourselves) whatever the peer had pushed into us and never
+    /// matched with an up — called on disconnect and when the peer tells us it let go.</summary>
     private void ReleaseAllInjectedInput()
     {
         foreach (var (vk, extended) in _heldKeys) InputInjector.Key(vk, false, extended);
@@ -241,6 +315,22 @@ public sealed class EdgeBridge : IDisposable
 
         foreach (var button in _heldButtons) InputInjector.Button(button, false);
         _heldButtons.Clear();
+    }
+
+    /// <summary>Releases (on the PEER) whatever we'd forwarded as held while we were
+    /// controlling them — called whenever WE leave Remote mode, voluntarily or because
+    /// the peer took control back.</summary>
+    private void ReleaseAllRemoteHeldInput()
+    {
+        if (_connection is { } conn)
+        {
+            foreach (var (vk, extended) in _sentHeldKeys)
+                _ = conn.SendAsync(WireMessage.KeyEventMsg(vk, 0, false, extended));
+            foreach (var button in _sentHeldButtons)
+                _ = conn.SendAsync(WireMessage.MouseButtonEvent(button, false));
+        }
+        _sentHeldKeys.Clear();
+        _sentHeldButtons.Clear();
     }
 
     public void Dispose()

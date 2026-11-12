@@ -16,13 +16,20 @@ public sealed class KeyEventArgsLite : EventArgs
 public sealed class KeyboardHook : IDisposable
 {
     private const uint LLKHF_EXTENDED = 0x01;
+    private const short KEY_DOWN_MASK = unchecked((short)0x8000);
 
     private readonly Win32.HookProc _proc;
     private IntPtr _hookHandle;
+    private bool _hotkeyActive; // true from the moment Ctrl+Alt+Space is recognized until Space is released
 
     public bool Swallow { get; set; }
 
     public event Action<KeyEventArgsLite>? KeyEvent;
+
+    /// <summary>Fires once per physical press of the global toggle hotkey (Ctrl+Alt+Space).
+    /// Consumed entirely at the hook level: never reaches local apps nor the generic
+    /// <see cref="KeyEvent"/> (so it's never forwarded to the peer either).</summary>
+    public event Action? HotkeyToggle;
 
     public KeyboardHook()
     {
@@ -46,12 +53,27 @@ public sealed class KeyboardHook : IDisposable
             var msg = (int)wParam;
             var isDown = msg is Win32.WM_KEYDOWN or Win32.WM_SYSKEYDOWN;
             var isUp = msg is Win32.WM_KEYUP or Win32.WM_SYSKEYUP;
+            var vkCode = (int)data.vkCode;
+
+            if (vkCode == Win32.VK_SPACE && isDown && !_hotkeyActive
+                && (Win32.GetAsyncKeyState(Win32.VK_CONTROL) & KEY_DOWN_MASK) != 0
+                && (Win32.GetAsyncKeyState(Win32.VK_MENU) & KEY_DOWN_MASK) != 0)
+            {
+                _hotkeyActive = true;
+                HotkeyToggle?.Invoke();
+                return (IntPtr)1; // consumed unconditionally: never reaches local apps nor the peer
+            }
+            if (vkCode == Win32.VK_SPACE && _hotkeyActive)
+            {
+                if (isUp) _hotkeyActive = false;
+                return (IntPtr)1; // repeat keydowns and the eventual key-up of the same combo press
+            }
 
             if (isDown || isUp)
             {
                 KeyEvent?.Invoke(new KeyEventArgsLite
                 {
-                    VkCode = (int)data.vkCode,
+                    VkCode = vkCode,
                     ScanCode = (int)data.scanCode,
                     IsDown = isDown,
                     IsExtended = (data.flags & LLKHF_EXTENDED) != 0,
