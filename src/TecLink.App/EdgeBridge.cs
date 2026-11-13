@@ -45,6 +45,17 @@ public sealed class EdgeBridge : IDisposable
     private Point? _lastLocalPoint;
     private readonly Dictionary<string, TaskCompletionSource<WireMessage>> _mapRequests = new();
 
+    // Extras negotiated in Hello: pointer settings, remote screen and file transfer.
+    private volatile bool _peerExtras;
+    private bool _viewInput;
+    private readonly PointerSpeed _speed = new();
+    private readonly ScreenShareHost _screenHost = new();
+    public FileTransfers Files { get; }
+
+    /// <summary>Raised on the network thread with each frame of the peer's screen.</summary>
+    public event Action<WireMessage>? ScreenFrameReceived;
+    public event Action? ViewerCloseRequested;
+
     // Tracks keys/buttons we've injected on THIS machine because the peer is controlling
     // us, so a dropped connection (or the peer handing control back) mid-keypress doesn't
     // leave them stuck down.
@@ -70,6 +81,12 @@ public sealed class EdgeBridge : IDisposable
 
         _desktop = CaptureDesktop();
         SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
+        Files = new FileTransfers(() => _peerExtras ? _connection : null,
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "TecLink"));
+        Files.Status += text => StatusChanged?.Invoke(text);
+        Files.Received += (items, folder) => ControlChanged?.Invoke($"Recibido de la otra PC: {items} archivo(s) en Descargas\\TecLink");
+        CursorStyler.Apply(_config.CursorStyle, _config.CursorSizePercent);
+        ApplyWindowsSpeed();
 
         _mouseHook.Move += OnMouseMove;
         _rawMouse.Move += OnRawMouseMove;
@@ -129,10 +146,15 @@ public sealed class EdgeBridge : IDisposable
             StatusChanged?.Invoke("Conexión perdida. Reintentando...");
             _connection = null;
             _peerControlling = false;
+            _peerExtras = false;
+            _screenHost.Stop();
+            Files.Abort();
             _clipboard.BeginInvoke(() =>
             {
+                _viewInput = false;
                 SwitchToLocal(force: true);
                 ReleaseAllInjectedInput();
+                ViewerCloseRequested?.Invoke();
             });
             await connection.DisposeAsync();
 
@@ -144,6 +166,11 @@ public sealed class EdgeBridge : IDisposable
     private void OnMessageReceived(WireMessage msg)
     {
         if (_clipboard.IsDisposed) return;
+        // Bulk data stays on the network thread: writing to disk here is what
+        // throttles the sender, and frames are decoded off the UI thread.
+        if (Files.Handle(msg)) return;
+        if (msg.Type == MessageType.ScreenFrame) { ScreenFrameReceived?.Invoke(msg); return; }
+        if (msg.Type == MessageType.ScreenAck) { _screenHost.Ack(); return; }
         if (_clipboard.InvokeRequired)
         {
             _clipboard.BeginInvoke(() => OnMessageReceived(msg));
@@ -160,6 +187,9 @@ public sealed class EdgeBridge : IDisposable
                 _remoteDisplays = msg.Displays.Length > 0 ? msg.Displays
                     : new[] { new DisplayInfo("desktop", 0, 0, _remoteWidth, _remoteHeight) };
                 _peerMapSupported = msg.SupportsSpatialMap;
+                _peerExtras = msg.SupportsExtras;
+                if (_peerExtras && _config.Role == PeerRole.Server)
+                    _ = _connection!.SendAsync(WireMessage.Pointer(_config.PointerSpeedLevel, _config.CursorStyle, _config.CursorSizePercent));
                 RefreshSpatialRoutes();
                 if (_peerMapSupported && _config.UseSpatialMap && _spatialValid &&
                     (_config.Role == PeerRole.Server || !msg.HasSpatialMap))
@@ -192,6 +222,12 @@ public sealed class EdgeBridge : IDisposable
                 // yield — whoever's "take control" message arrives wins, the other side
                 // backs off automatically instead of both ends fighting over input.
                 if (_mode == BridgeMode.Remote) SwitchToLocal();
+                if (_viewInput)
+                {
+                    _viewInput = false;
+                    _keyboardHook.Swallow = false;
+                    ReleaseAllRemoteHeldInput();
+                }
                 _peerControlling = true;
                 StatusChanged?.Invoke("La otra PC tomó el mando");
                 ControlChanged?.Invoke("La otra PC tiene el mando");
@@ -218,6 +254,20 @@ public sealed class EdgeBridge : IDisposable
             case MessageType.SpatialMapAck:
                 if (_mapRequests.TryGetValue(msg.RequestId ?? "", out var request)) request.TrySetResult(msg);
                 break;
+            case MessageType.PointerSettings:
+                try { ApplyPointerSettings(msg.SpeedLevel, msg.CursorStyle, msg.CursorSizePercent, fromPeer: true); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Logger.LogError(ex); }
+                break;
+            case MessageType.ScreenStart:
+                if (_connection is { } viewer)
+                {
+                    _screenHost.Start(viewer, msg.Index, msg.Width, msg.Height);
+                    ControlChanged?.Invoke("La otra PC está viendo esta pantalla");
+                }
+                break;
+            case MessageType.ScreenStop:
+                _screenHost.Stop();
+                break;
         }
     }
 
@@ -229,6 +279,7 @@ public sealed class EdgeBridge : IDisposable
 
     private void OnMouseMove(HookMouseEventArgs e)
     {
+        if (_viewInput) return; // the remote-screen window owns the mouse; edges stay closed
         if (_mode == BridgeMode.Local)
         {
             if (_config.UseSpatialMap && _spatialValid && _connection is not null && _remoteKnown && !_peerControlling)
@@ -259,6 +310,7 @@ public sealed class EdgeBridge : IDisposable
         if (_mode == BridgeMode.Remote && _connection is { } connection && _remotePointer is { } pointer)
         {
             var previous = pointer.Position;
+            (dx, dy) = _speed.Scale(dx, dy, CurrentSpeedLevel());
             var target = pointer.Advance(dx, dy);
             if (_config.UseSpatialMap && _spatialValid)
             {
@@ -329,7 +381,7 @@ public sealed class EdgeBridge : IDisposable
 
     private void OnKeyEvent(KeyEventArgsLite e)
     {
-        if (_mode != BridgeMode.Remote || _connection is null) return;
+        if ((_mode != BridgeMode.Remote && !_viewInput) || _connection is null) return;
         if (e.IsDown) _sentHeldKeys[e.VkCode] = (e.ScanCode, e.IsExtended); else _sentHeldKeys.Remove(e.VkCode);
         _ = _connection.SendAsync(WireMessage.KeyEventMsg(e.VkCode, e.ScanCode, e.IsDown, e.IsExtended));
     }
@@ -343,6 +395,12 @@ public sealed class EdgeBridge : IDisposable
     /// <see cref="OnMessageReceived"/>).</summary>
     public void ToggleControl()
     {
+        if (_viewInput)
+        {
+            // Inside the remote-screen window the hotkey is the way out.
+            _clipboard.BeginInvoke(() => ViewerCloseRequested?.Invoke());
+            return;
+        }
         if (_connection is null || !_remoteKnown)
         {
             StatusChanged?.Invoke("Atajo presionado, pero no hay conexión con la otra PC todavía");
@@ -367,6 +425,7 @@ public sealed class EdgeBridge : IDisposable
     private void EngageRemote(int anchorX, int anchorY, int entryX, int entryY)
     {
         _peerControlling = false;
+        _speed.Reset();
         _mode = BridgeMode.Remote;
         _anchorX = anchorX;
         _anchorY = anchorY;
@@ -394,7 +453,7 @@ public sealed class EdgeBridge : IDisposable
         _remotePointer = null;
         _activeRoute = null;
         _mouseHook.Swallow = false;
-        _keyboardHook.Swallow = false;
+        _keyboardHook.Swallow = _viewInput;
 
         if (resumeX is int rx && resumeY is int ry)
         {
@@ -445,7 +504,7 @@ public sealed class EdgeBridge : IDisposable
     {
         var bounds = _desktop.Bounds;
         var displays = LocalDisplays().Select(d => d with { Left = d.Left - bounds.Left, Top = d.Top - bounds.Top }).ToArray();
-        return connection.SendAsync(WireMessage.Hello(_config.MachineName, bounds.Width, bounds.Height, displays, true, _config.UseSpatialMap));
+        return connection.SendAsync(WireMessage.Hello(_config.MachineName, bounds.Width, bounds.Height, displays, true, _config.UseSpatialMap, true));
     }
 
     private static DisplayInfo[] LocalDisplays() => Screen.AllScreens.Select(s =>
@@ -468,6 +527,9 @@ public sealed class EdgeBridge : IDisposable
             automatic = _config.AutomaticSwitching, theme = _config.Theme,
             placements = _config.ScreenPositions, spatialEnabled = _config.UseSpatialMap, peerMapSupported = _peerMapSupported,
             host = _config.PeerHost, port = _config.Port, role = _config.Role.ToString(),
+            pointerSpeed = CurrentSpeedLevel(), cursorStyle = CursorStyler.Normalize(_config.CursorStyle),
+            cursorSize = CursorStyler.ClampSize(_config.CursorSizePercent), extras = CanUseExtras,
+            transfer = Files.LastStatus, receiveFolder = Files.ReceiveFolder,
             local = local.OrderBy(d => order.Contains(d.Id) ? order.IndexOf(d.Id) : 1000 + Array.IndexOf(local, d)).Select(d => new
             {
                 id = d.Id, label = "Pantalla " + (Array.IndexOf(local, d) + 1), width = d.Width, height = d.Height,
@@ -538,8 +600,101 @@ public sealed class EdgeBridge : IDisposable
         });
     }
 
+    public bool CanUseExtras => _connection is not null && _remoteKnown && _peerExtras;
+    public string RemoteName => _remoteName;
+    public IReadOnlyList<DisplayInfo> RemoteDisplays => _remoteDisplays;
+
+    /// <summary>The level chosen in TecLink, or whatever Windows currently uses.</summary>
+    private int CurrentSpeedLevel()
+    {
+        if (_config.PointerSpeedLevel > 0) return PointerSpeed.Clamp(_config.PointerSpeedLevel);
+        var level = PointerSpeed.Default;
+        return Win32.SystemParametersInfo(Win32.SPI_GETMOUSESPEED, 0, ref level, 0) ? PointerSpeed.Clamp(level) : PointerSpeed.Default;
+    }
+
+    private void ApplyWindowsSpeed()
+    {
+        if (_config.PointerSpeedLevel <= 0) return;
+        var level = 0;
+        if (Win32.SystemParametersInfo(Win32.SPI_GETMOUSESPEED, 0, ref level, 0) && level == _config.PointerSpeedLevel) return;
+        Win32.SystemParametersInfo(Win32.SPI_SETMOUSESPEED, 0, new IntPtr(_config.PointerSpeedLevel), 3); // persist + notify
+    }
+
+    /// <summary>One speed and one pointer design for both PCs: stored and applied here
+    /// (Windows pointer speed, arrow design) and mirrored on the peer.</summary>
+    public void ApplyPointerSettings(int speedLevel, string? cursorStyle, int cursorSizePercent, bool fromPeer = false)
+    {
+        var previous = (_config.PointerSpeedLevel, _config.CursorStyle, _config.CursorSizePercent);
+        if (speedLevel > 0) _config.PointerSpeedLevel = PointerSpeed.Clamp(speedLevel); // 0 = the peer never chose one
+        _config.CursorStyle = CursorStyler.Normalize(cursorStyle);
+        _config.CursorSizePercent = CursorStyler.ClampSize(cursorSizePercent);
+        try { _config.Save(); }
+        catch { (_config.PointerSpeedLevel, _config.CursorStyle, _config.CursorSizePercent) = previous; throw; }
+        CursorStyler.Apply(_config.CursorStyle, _config.CursorSizePercent);
+        ApplyWindowsSpeed();
+        if (!fromPeer && CanUseExtras)
+            _ = _connection!.SendAsync(WireMessage.Pointer(_config.PointerSpeedLevel, _config.CursorStyle, _config.CursorSizePercent));
+        if (fromPeer) StatusChanged?.Invoke("Ajustes del ratón recibidos de la otra PC.");
+    }
+
+    public void StartViewing(int displayIndex, int maxWidth, int maxHeight)
+    {
+        if (CanUseExtras) _ = _connection!.SendAsync(WireMessage.ScreenStart(displayIndex, maxWidth, maxHeight));
+    }
+
+    public void StopViewing()
+    {
+        SetViewInput(false);
+        if (_connection is { } connection && _peerExtras) _ = connection.SendAsync(WireMessage.ScreenStop());
+    }
+
+    public void AckFrame() => _ = _connection?.SendAsync(WireMessage.ScreenAck());
+
+    /// <summary>While the remote-screen window is active, the keyboard goes to the peer
+    /// and the window forwards its own mouse events.</summary>
+    public void SetViewInput(bool active)
+    {
+        if (active == _viewInput) return;
+        if (active)
+        {
+            if (!CanUseExtras) return;
+            if (_mode == BridgeMode.Remote) SwitchToLocal();
+            _viewInput = true;
+            _peerControlling = false;
+            _keyboardHook.Swallow = true;
+            _ = _connection!.SendAsync(WireMessage.SwitchToRemote());
+            StatusChanged?.Invoke("Controlando la otra PC desde su pantalla");
+        }
+        else
+        {
+            _viewInput = false;
+            _keyboardHook.Swallow = _mode == BridgeMode.Remote;
+            ReleaseAllRemoteHeldInput();
+            if (_connection is { } connection) _ = connection.SendAsync(WireMessage.SwitchToLocal());
+            StatusChanged?.Invoke("Control local");
+        }
+    }
+
+    public void ViewerMove(int wireX, int wireY)
+    {
+        if (_viewInput && _connection is { } connection) _ = connection.SendAsync(WireMessage.MouseMove(wireX, wireY));
+    }
+
+    public void ViewerButton(MouseButtonKind button, bool isDown)
+    {
+        if (!_viewInput || _connection is not { } connection) return;
+        if (isDown) _sentHeldButtons.Add(button); else _sentHeldButtons.Remove(button);
+        _ = connection.SendAsync(WireMessage.MouseButtonEvent(button, isDown));
+    }
+
+    public void ViewerWheel(int delta)
+    {
+        if (_viewInput && _connection is { } connection) _ = connection.SendAsync(WireMessage.MouseWheelEvent(delta));
+    }
+
     public void Dispose()
     {
+        _screenHost.Dispose();
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         _mouseHook.Dispose();
         _rawMouse.Dispose();

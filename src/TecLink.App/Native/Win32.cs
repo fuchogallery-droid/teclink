@@ -177,6 +177,58 @@ internal static class Win32
     [DllImport("user32.dll", SetLastError = true)]
     public static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
 
+    public const int CURSOR_SHOWING = 1;
+    public const uint OCR_NORMAL = 32512;
+    public const uint SPI_SETCURSORS = 0x0057;
+    public const uint SPI_GETMOUSESPEED = 0x0070;
+    public const uint SPI_SETMOUSESPEED = 0x0071;
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct CURSORINFO
+    {
+        public int cbSize, flags;
+        public IntPtr hCursor;
+        public POINT ptScreenPos;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct ICONINFO
+    {
+        public bool fIcon;
+        public int xHotspot, yHotspot;
+        public IntPtr hbmMask, hbmColor;
+    }
+
+    [DllImport("user32.dll")]
+    public static extern bool GetCursorInfo(ref CURSORINFO info);
+
+    [DllImport("user32.dll")]
+    public static extern bool GetIconInfo(IntPtr icon, out ICONINFO info);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr CreateIconIndirect(ref ICONINFO info);
+
+    [DllImport("user32.dll")]
+    public static extern bool DrawIconEx(IntPtr hdc, int x, int y, IntPtr icon, int width, int height, uint step, IntPtr brush, uint flags);
+
+    [DllImport("user32.dll")]
+    public static extern bool DestroyIcon(IntPtr icon);
+
+    [DllImport("gdi32.dll")]
+    public static extern bool DeleteObject(IntPtr handle);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool SetSystemCursor(IntPtr cursor, uint id);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool SystemParametersInfo(uint action, uint param, IntPtr value, uint flags);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool SystemParametersInfo(uint action, uint param, ref int value, uint flags);
+
+    [DllImport("user32.dll")]
+    public static extern uint GetDpiForSystem();
+
     [DllImport("user32.dll")]
     public static extern bool AddClipboardFormatListener(IntPtr hwnd);
 

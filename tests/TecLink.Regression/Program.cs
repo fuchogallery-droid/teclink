@@ -184,4 +184,83 @@ var ackWire = WireMessage.Decode(WireMessage.MapAck("request", false, "error").E
 Check(!ackWire.Accepted && ackWire.Text == "error", "Map rejection acknowledgement round trip");
 var capable = WireMessage.Decode(WireMessage.Hello("peer", 1000, 800, mapRemote, true, true).Encode());
 Check(capable.SupportsSpatialMap && capable.HasSpatialMap, "Capability negotiation round trip");
-Console.WriteLine($"PASS: {checks} geometry, input, map and TCP regression checks");
+
+// Extras: pointer settings, remote screen and file transfer.
+var extrasHello = WireMessage.Decode(WireMessage.Hello("peer", 1000, 800, mapRemote, true, false, true).Encode());
+Check(extrasHello.SupportsExtras && extrasHello.SupportsSpatialMap && !extrasHello.HasSpatialMap, "Extras capability travels in Hello without disturbing map flags");
+Check(!capable.SupportsExtras, "A 0.4 peer is not assumed to support extras");
+Check(WireMessage.Decode(new byte[] { 200, 1, 2, 3 }).Type == (MessageType)200, "Unknown message from a newer peer is ignored, not fatal");
+var pointerWire = WireMessage.Decode(WireMessage.Pointer(14, "green", 150).Encode());
+Check(pointerWire.SpeedLevel == 14 && pointerWire.CursorStyle == "green" && pointerWire.CursorSizePercent == 150, "Pointer settings round trip");
+var startWire = WireMessage.Decode(WireMessage.ScreenStart(1, 1920, 1040).Encode());
+Check(startWire.Index == 1 && startWire.Width == 1920 && startWire.Height == 1040, "Screen request round trip");
+var pixels = Enumerable.Range(0, 70000).Select(n => (byte)(n * 7)).ToArray();
+var frameWire = WireMessage.Decode(WireMessage.ScreenFrame(1, 2160, 0, 2240, 1400, pixels).Encode());
+Check(frameWire.Left == 2160 && frameWire.Width == 2240 && frameWire.Height == 1400 && frameWire.Data.SequenceEqual(pixels), "Screen frame round trip keeps geometry and bytes");
+try { WireMessage.Decode(WireMessage.FileData("id", pixels).Encode()[..500]); Check(false, "Truncated data rejected"); } catch (Exception ex) when (ex is InvalidDataException or EndOfStreamException) { Check(true, "Truncated data rejected"); }
+
+var speed = new PointerSpeed();
+var travelled = 0;
+for (var n = 0; n < 1000; n++) travelled += speed.Scale(1, 0, 10).X;
+Check(travelled == 1000, "Level 10 leaves raw movement untouched");
+speed.Reset(); travelled = 0;
+for (var n = 0; n < 1000; n++) travelled += speed.Scale(1, 0, 6).X;
+Check(travelled == 500, "Slow level keeps the fractional remainder instead of dropping it");
+speed.Reset(); travelled = 0;
+for (var n = 0; n < 100; n++) travelled += speed.Scale(-1, 0, 14).X;
+Check(travelled == -200, "Fast level scales in both directions");
+Check(PointerSpeed.Clamp(0) == 10 && PointerSpeed.Clamp(99) == 20 && PointerSpeed.Factor(20) == 3.5, "Speed level is bounded to the Windows scale");
+
+Check(FileTransfers.SafeRelativePath("Fotos/2026/a.jpg") == Path.Combine("Fotos", "2026", "a.jpg"), "Folder structure is preserved");
+foreach (var hostile in new[] { "../fuera.txt", "Fotos/../../fuera.txt", "", "/", ".." })
+    try { FileTransfers.SafeRelativePath(hostile); Check(false, "Escaping path rejected: " + hostile); } catch (InvalidDataException) { Check(true, "Escaping path rejected"); }
+Check(!Path.IsPathRooted(FileTransfers.SafeRelativePath("C:\\Windows\\x.dll")) && !FileTransfers.SafeRelativePath("C:\\Windows\\x.dll").Contains(':'), "Absolute path is confined below the receive folder");
+
+// A real folder sent over real TCP between two FileTransfers instances.
+var work = Path.Combine(Path.GetTempPath(), "teclink-test-" + Guid.NewGuid().ToString("N"));
+var outbox = Path.Combine(work, "origen", "Proyecto");
+var inbox = Path.Combine(work, "destino");
+Directory.CreateDirectory(Path.Combine(outbox, "sub", "vacia"));
+var big = new byte[3_000_000]; new Random(7).NextBytes(big);
+File.WriteAllBytes(Path.Combine(outbox, "grande.bin"), big);
+File.WriteAllText(Path.Combine(outbox, "sub", "nota ñ.txt"), "hola");
+File.WriteAllBytes(Path.Combine(outbox, "vacio.dat"), Array.Empty<byte>());
+var looseFile = Path.Combine(work, "origen", "suelto.txt");
+File.WriteAllText(looseFile, "uno");
+try
+{
+    using var fileListener = new TcpListener(IPAddress.Loopback, 0);
+    fileListener.Start();
+    using var senderSocket = new TcpClient();
+    await senderSocket.ConnectAsync(IPAddress.Loopback, ((IPEndPoint)fileListener.LocalEndpoint).Port);
+    var receiverSocket = await fileListener.AcceptTcpClientAsync();
+    await using var senderLink = new PeerConnection(senderSocket);
+    await using var receiverLink = new PeerConnection(receiverSocket);
+    var sender = new FileTransfers(() => senderLink, Path.Combine(work, "no-usado"));
+    var receiver = new FileTransfers(() => receiverLink, inbox);
+    var delivered = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var arrivals = 0;
+    receiver.Received += (_, _) => arrivals++;
+    sender.Status += text => { if (text.StartsWith("Entregado")) delivered.TrySetResult(text); if (text.StartsWith("La otra PC no pudo") || text.StartsWith("No se pudo")) delivered.TrySetException(new Exception(text)); };
+    senderLink.MessageReceived += m => sender.Handle(m);
+    receiverLink.MessageReceived += m => receiver.Handle(m);
+    senderLink.StartReceiving(); receiverLink.StartReceiving();
+
+    await sender.SendAsync(new[] { outbox, looseFile });
+    await delivered.Task.WaitAsync(TimeSpan.FromSeconds(20));
+    Check(File.ReadAllBytes(Path.Combine(inbox, "Proyecto", "grande.bin")).SequenceEqual(big), "Large file arrives byte for byte");
+    Check(File.ReadAllText(Path.Combine(inbox, "Proyecto", "sub", "nota ñ.txt")) == "hola", "Nested file with accents arrives intact");
+    Check(Directory.Exists(Path.Combine(inbox, "Proyecto", "sub", "vacia")), "Empty folders are recreated");
+    Check(new FileInfo(Path.Combine(inbox, "Proyecto", "vacio.dat")).Length == 0, "Empty file is created");
+    Check(File.ReadAllText(Path.Combine(inbox, "suelto.txt")) == "uno", "Loose file sent together with a folder arrives");
+    Check(arrivals == 1, "Receiver announces the finished transfer once");
+
+    delivered = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+    await sender.SendAsync(new[] { outbox });
+    await delivered.Task.WaitAsync(TimeSpan.FromSeconds(20));
+    Check(File.Exists(Path.Combine(inbox, "Proyecto (2)", "grande.bin")) && File.ReadAllBytes(Path.Combine(inbox, "Proyecto", "grande.bin")).SequenceEqual(big),
+        "Sending the same folder again never overwrites the first copy");
+}
+finally { try { Directory.Delete(work, true); } catch (IOException) { } }
+
+Console.WriteLine($"PASS: {checks} geometry, input, map, TCP, pointer and file-transfer regression checks");

@@ -12,6 +12,7 @@ public sealed class ControlPanelForm : Form
     private readonly WebView2 _web = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.FromArgb(8, 8, 8) };
     private readonly EdgeBridge _bridge;
     private readonly Func<string> _status;
+    private readonly Action _openViewer;
     private bool _ready;
     private bool _shutdown;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
@@ -27,9 +28,9 @@ public sealed class ControlPanelForm : Form
         public List<ScreenPlacement>? Placements { get; set; }
     }
 
-    public ControlPanelForm(EdgeBridge bridge, Func<string> status)
+    public ControlPanelForm(EdgeBridge bridge, Func<string> status, Action openViewer)
     {
-        _bridge = bridge; _status = status;
+        _bridge = bridge; _status = status; _openViewer = openViewer;
         Text = "TecLink — pantallas y salidas";
         ClientSize = new Size(1120, 760);
         MinimumSize = new Size(370, 600);
@@ -85,6 +86,28 @@ public sealed class ControlPanelForm : Form
                     Post(new { type = "saved", state = _bridge.ViewState(_status()), message });
                     break;
                 case "toggleControl": _bridge.ToggleControl(); RefreshState(); break;
+                case "pointer":
+                    _bridge.ApplyPointerSettings(root.GetProperty("speed").GetInt32(), root.GetProperty("style").GetString(), root.GetProperty("size").GetInt32());
+                    RefreshState();
+                    break;
+                case "viewScreen": _openViewer(); break;
+                case "pickFiles":
+                    using (var files = new OpenFileDialog { Multiselect = true, Title = "Enviar archivos a la otra PC" })
+                        if (files.ShowDialog(this) == DialogResult.OK) _ = _bridge.Files.SendAsync(files.FileNames);
+                    break;
+                case "pickFolder":
+                    using (var folder = new FolderBrowserDialog { Description = "Enviar una carpeta completa a la otra PC", UseDescriptionForTitle = true })
+                        if (folder.ShowDialog(this) == DialogResult.OK) _ = _bridge.Files.SendAsync(new[] { folder.SelectedPath });
+                    break;
+                case "dropFiles":
+                    var dropped = e.AdditionalObjects.OfType<CoreWebView2File>().Select(f => f.Path).Where(p => !string.IsNullOrEmpty(p)).ToArray();
+                    if (dropped.Length > 0) _ = _bridge.Files.SendAsync(dropped);
+                    else Post(new { type = "error", message = "No se pudo leer lo que soltaste. Usa «Elegir archivos» o «Elegir carpeta»." });
+                    break;
+                case "openReceived":
+                    Directory.CreateDirectory(_bridge.Files.ReceiveFolder);
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(_bridge.Files.ReceiveFolder) { UseShellExecute = true });
+                    break;
             }
         }
         catch (Exception ex) when (ex is ArgumentException or JsonException or IOException or UnauthorizedAccessException)

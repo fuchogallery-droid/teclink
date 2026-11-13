@@ -93,8 +93,41 @@
     ['theme', 'automatic', 'reset-map', 'position-x', 'position-y'].forEach(id => $(id).disabled = saving);
     document.querySelectorAll('[data-dx]').forEach(b => b.disabled = saving);
     for (const [id, value] of Object.entries({ 'connection-title': state.connected ? 'Tus equipos están conectados' : 'Esperando conexión', 'detail-name': state.machineName, 'detail-remote': state.remoteName || '—', 'detail-role': state.role === 'Server' ? 'Servidor' : 'Cliente', 'detail-host': state.host, 'detail-port': state.port, 'detail-status': state.status })) $(id).textContent = value;
+    const extras = !!state.extras, level = state.pointerSpeed || 10, size = state.cursorSize || 100, style = state.cursorStyle || 'system';
+    if (!pointerBusy) { $('speed').value = level; $('cursor-size').value = size; chosenStyle = style; }
+    $('speed-label').textContent = `${$('speed').value} de 20`; $('size-label').textContent = `${$('cursor-size').value} %`;
+    document.querySelectorAll('.swatch').forEach(b => b.setAttribute('aria-checked', b.dataset.style === chosenStyle ? 'true' : 'false'));
+    $('cursor-size').disabled = chosenStyle === 'system';
+    $('mouse-sync').textContent = extras ? 'Sincronizado con la otra PC.' : 'La otra PC no está conectada o necesita esta versión de TecLink: por ahora los cambios se guardan solo aquí.';
+    $('peer-sync').textContent = extras ? '' : 'Conecta la otra PC con esta misma versión de TecLink para ver su pantalla y enviar archivos.';
+    ['view-screen', 'pick-files', 'pick-folder'].forEach(id => $(id).disabled = !extras);
+    $('dropzone').setAttribute('aria-disabled', extras ? 'false' : 'true');
+    $('transfer-status').textContent = state.transfer || 'Sin envíos todavía.';
+    if (state.receiveFolder) $('receive-folder').textContent = state.receiveFolder;
     draw();
   }
+  let pointerBusy = false, pointerTimer, chosenStyle = 'system';
+  function sendPointer() {
+    pointerBusy = true; clearTimeout(pointerTimer);
+    $('speed-label').textContent = `${$('speed').value} de 20`; $('size-label').textContent = `${$('cursor-size').value} %`;
+    pointerTimer = setTimeout(() => { send({ type: 'pointer', speed: +$('speed').value, style: chosenStyle, size: +$('cursor-size').value }); setTimeout(() => pointerBusy = false, 400); }, 160);
+  }
+  $('speed').oninput = sendPointer; $('cursor-size').oninput = sendPointer;
+  document.querySelectorAll('.swatch').forEach(b => b.onclick = () => { chosenStyle = b.dataset.style; document.querySelectorAll('.swatch').forEach(o => o.setAttribute('aria-checked', o === b ? 'true' : 'false')); $('cursor-size').disabled = chosenStyle === 'system'; sendPointer(); });
+  $('view-screen').onclick = () => send({ type: 'viewScreen' });
+  $('pick-files').onclick = () => send({ type: 'pickFiles' }); $('pick-folder').onclick = () => send({ type: 'pickFolder' });
+  $('open-received').onclick = () => send({ type: 'openReceived' });
+  $('dropzone').onclick = () => { if (state?.extras) send({ type: 'pickFiles' }); };
+  $('dropzone').onkeydown = e => { if ((e.key === 'Enter' || e.key === ' ') && state?.extras) { e.preventDefault(); send({ type: 'pickFiles' }); } };
+  addEventListener('dragover', e => { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = state?.extras ? 'copy' : 'none'; $('dropzone').classList.toggle('over', !!state?.extras); });
+  addEventListener('dragleave', e => { if (!e.relatedTarget) $('dropzone').classList.remove('over'); });
+  addEventListener('drop', e => {
+    e.preventDefault(); $('dropzone').classList.remove('over');
+    const files = [...(e.dataTransfer?.files || [])];
+    if (!state?.extras || !files.length) return;
+    if (preview) { window.__tecMessages.push({ type: 'dropFiles', count: files.length }); return; }
+    window.chrome.webview.postMessageWithAdditionalObjects({ type: 'dropFiles' }, files);
+  });
   function move(dx, dy) { if (saving) return; const p = draft.placements.find(p => M.key(p) === selected); if (!p) return; p.x += dx; p.y += dy; dirty = true; update(); }
   document.querySelectorAll('[data-dx]').forEach(b => b.onclick = () => move(+b.dataset.dx, +b.dataset.dy));
   ['x', 'y'].forEach(axis => $('position-' + axis).onchange = e => { const p = draft.placements.find(p => M.key(p) === selected), n = Number(e.target.value); if (p && Number.isInteger(n) && Math.abs(n) <= 1000000) { p[axis] = n; dirty = true; update(); } });
@@ -106,12 +139,12 @@
   function zoom(factor) { const board = $('spatial-map'), old = view.scale, next = Math.max(.015, Math.min(.5, old * factor)), cx = board.clientWidth / 2, cy = board.clientHeight / 2; view.x = cx - (cx - view.x) * next / old; view.y = cy - (cy - view.y) * next / old; view.scale = next; draw(); }
   $('zoom-in').onclick = () => zoom(1.25); $('zoom-out').onclick = () => zoom(.8);
   $('reset-map').onclick = () => { draft.placements = M.defaults(state); dirty = true; update(); fit(); };
-  document.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { document.querySelectorAll('[data-tab]').forEach(t => { t.classList.toggle('active', t === b); t.setAttribute('aria-selected', t === b ? 'true' : 'false'); }); $('screens-tab').hidden = b.dataset.tab !== 'screens'; $('connection-tab').hidden = b.dataset.tab !== 'connection'; if (b.dataset.tab === 'screens') fit(); });
+  document.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { document.querySelectorAll('[data-tab]').forEach(t => { t.classList.toggle('active', t === b); t.setAttribute('aria-selected', t === b ? 'true' : 'false'); }); ['screens', 'mouse', 'peer', 'connection'].forEach(name => $(name + '-tab').hidden = b.dataset.tab !== name); $('savebar').hidden = b.dataset.tab !== 'screens'; if (b.dataset.tab === 'screens') fit(); });
   new ResizeObserver(() => fit()).observe($('spatial-map'));
   window.__tecTest = { receive, draft: () => structuredClone(draft), select: key => { selected = key; update(); } };
   if (preview) {
     window.__tecMessages = [];
-    receive({ type: 'state', state: { machineName: 'JENAV', remoteName: 'RAFAEL', connected: true, mode: 'local', role: 'Client', host: '192.168.12.183', port: 51777, status: 'Conexión por red local', automatic: true, theme: 'dark', peerMapSupported: true, spatialEnabled: true,
+    receive({ type: 'state', state: { machineName: 'JENAV', remoteName: 'RAFAEL', connected: true, mode: 'local', role: 'Client', host: '192.168.12.183', port: 51777, status: 'Conexión por red local', extras: true, pointerSpeed: 10, cursorStyle: 'green', cursorSize: 150, transfer: '', receiveFolder: 'C:\\Users\\jenav\\Downloads\\TecLink', automatic: true, theme: 'dark', peerMapSupported: true, spatialEnabled: true,
       local: [{ id: 'screen1', label: 'Pantalla 1', primary: true, left: 0, top: 0, width: 2240, height: 1400 }, { id: 'screen2', label: 'Pantalla 2 · HDMI', left: -1600, top: -2160, width: 3840, height: 2160 }], remote: [{ id: 'screen1', label: 'Pantalla 1', left: 0, top: 0, width: 1920, height: 1080 }], placements: [{ id: 'screen1', remote: false, x: 0, y: 0 }, { id: 'screen2', remote: false, x: -1600, y: -2160 }, { id: 'screen1', remote: true, x: -1920, y: 0 }] } });
   } else { window.chrome?.webview?.addEventListener('message', e => receive(e.data)); send({ type: 'ready' }); }
 })();

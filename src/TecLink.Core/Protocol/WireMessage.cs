@@ -23,6 +23,22 @@ public sealed class WireMessage
     public string? RequestId { get; init; }
     public ScreenPlacement[] Placements { get; init; } = Array.Empty<ScreenPlacement>();
     public bool Accepted { get; init; }
+    public bool SupportsExtras { get; init; }
+
+    // Pointer settings, screen sharing and file transfer (only sent to peers that
+    // announced SupportsExtras in their Hello).
+    public int SpeedLevel { get; init; }
+    public string? CursorStyle { get; init; }
+    public int CursorSizePercent { get; init; }
+    public int Index { get; init; }
+    public int Left { get; init; }
+    public int Top { get; init; }
+    public int Width { get; init; }
+    public int Height { get; init; }
+    public long Size { get; init; }
+    public long Total { get; init; }
+    public bool IsDirectory { get; init; }
+    public byte[] Data { get; init; } = Array.Empty<byte>();
 
     // MouseMove (coordinates relative to the receiver's virtual desktop origin).
     // A single monitor at (0,0) retains the v0.2.0 representation.
@@ -44,14 +60,14 @@ public sealed class WireMessage
     // ClipboardText
     public string? Text { get; init; }
 
-    public static WireMessage Hello(string machineName, int screenWidth, int screenHeight, DisplayInfo[]? displays = null, bool supportsSpatialMap = false, bool hasSpatialMap = false) => new()
+    public static WireMessage Hello(string machineName, int screenWidth, int screenHeight, DisplayInfo[]? displays = null, bool supportsSpatialMap = false, bool hasSpatialMap = false, bool supportsExtras = false) => new()
     {
         Type = MessageType.Hello,
         MachineName = machineName,
         ScreenWidth = screenWidth,
         ScreenHeight = screenHeight,
         Displays = displays ?? Array.Empty<DisplayInfo>(),
-        SupportsSpatialMap = supportsSpatialMap, HasSpatialMap = hasSpatialMap,
+        SupportsSpatialMap = supportsSpatialMap, HasSpatialMap = hasSpatialMap, SupportsExtras = supportsExtras,
     };
 
     public static WireMessage MouseMove(int x, int y) => new() { Type = MessageType.MouseMove, X = x, Y = y };
@@ -84,6 +100,17 @@ public sealed class WireMessage
     public static WireMessage Map(string requestId, ScreenPlacement[] positions) => new() { Type = MessageType.SpatialMap, RequestId = requestId, Placements = positions };
     public static WireMessage MapAck(string requestId, bool accepted, string? error = null) => new() { Type = MessageType.SpatialMapAck, RequestId = requestId, Accepted = accepted, Text = error };
 
+    public static WireMessage Pointer(int speedLevel, string cursorStyle, int cursorSizePercent) => new() { Type = MessageType.PointerSettings, SpeedLevel = speedLevel, CursorStyle = cursorStyle, CursorSizePercent = cursorSizePercent };
+    public static WireMessage ScreenStart(int index, int maxWidth, int maxHeight) => new() { Type = MessageType.ScreenStart, Index = index, Width = maxWidth, Height = maxHeight };
+    public static WireMessage ScreenStop() => new() { Type = MessageType.ScreenStop };
+    public static WireMessage ScreenAck() => new() { Type = MessageType.ScreenAck };
+    /// <summary>Left/Top/Width/Height describe the captured monitor in the sender's wire coordinates.</summary>
+    public static WireMessage ScreenFrame(int index, int left, int top, int width, int height, byte[] jpeg) => new() { Type = MessageType.ScreenFrame, Index = index, Left = left, Top = top, Width = width, Height = height, Data = jpeg };
+    public static WireMessage FileStart(string transferId, string relativePath, long size, long total, bool isDirectory) => new() { Type = MessageType.FileStart, RequestId = transferId, Text = relativePath, Size = size, Total = total, IsDirectory = isDirectory };
+    public static WireMessage FileData(string transferId, byte[] data) => new() { Type = MessageType.FileData, RequestId = transferId, Data = data };
+    public static WireMessage FileEnd(string transferId) => new() { Type = MessageType.FileEnd, RequestId = transferId };
+    public static WireMessage TransferDone(string transferId, bool ok, string? text = null) => new() { Type = MessageType.TransferDone, RequestId = transferId, Accepted = ok, Text = text };
+
     public byte[] Encode()
     {
         using var ms = new MemoryStream();
@@ -105,7 +132,7 @@ public sealed class WireMessage
                         w.Write(display.Id); w.Write(display.Left); w.Write(display.Top);
                         w.Write(display.Width); w.Write(display.Height);
                     }
-                    w.Write((SupportsSpatialMap ? 1 : 0) | (HasSpatialMap ? 2 : 0));
+                    w.Write((SupportsSpatialMap ? 1 : 0) | (HasSpatialMap ? 2 : 0) | (SupportsExtras ? 4 : 0));
                 }
                 break;
             case MessageType.MouseMove:
@@ -131,6 +158,29 @@ public sealed class WireMessage
             case MessageType.Heartbeat:
             case MessageType.SwitchToRemote:
             case MessageType.SwitchToLocal:
+            case MessageType.ScreenStop:
+            case MessageType.ScreenAck:
+                break;
+            case MessageType.PointerSettings:
+                w.Write(SpeedLevel); w.Write(CursorStyle ?? "system"); w.Write(CursorSizePercent);
+                break;
+            case MessageType.ScreenStart:
+                w.Write(Index); w.Write(Width); w.Write(Height);
+                break;
+            case MessageType.ScreenFrame:
+                w.Write(Index); w.Write(Left); w.Write(Top); w.Write(Width); w.Write(Height); w.Write(Data.Length); w.Write(Data);
+                break;
+            case MessageType.FileStart:
+                w.Write(RequestId ?? ""); w.Write(Text ?? ""); w.Write(Size); w.Write(Total); w.Write(IsDirectory);
+                break;
+            case MessageType.FileData:
+                w.Write(RequestId ?? ""); w.Write(Data.Length); w.Write(Data);
+                break;
+            case MessageType.FileEnd:
+                w.Write(RequestId ?? "");
+                break;
+            case MessageType.TransferDone:
+                w.Write(RequestId ?? ""); w.Write(Accepted); w.Write(Text ?? "");
                 break;
             case MessageType.SpatialMap:
                 w.Write(RequestId ?? ""); w.Write(Placements.Length);
@@ -176,8 +226,23 @@ public sealed class WireMessage
             MessageType.SwitchToLocal => new WireMessage { Type = type },
             MessageType.SpatialMap => ReadMap(r),
             MessageType.SpatialMapAck => new WireMessage { Type = type, RequestId = r.ReadString(), Accepted = r.ReadBoolean(), Text = r.ReadString() },
-            _ => throw new InvalidDataException($"Unknown message type: {type}"),
+            MessageType.ScreenStop or MessageType.ScreenAck => new WireMessage { Type = type },
+            MessageType.PointerSettings => new WireMessage { Type = type, SpeedLevel = r.ReadInt32(), CursorStyle = r.ReadString(), CursorSizePercent = r.ReadInt32() },
+            MessageType.ScreenStart => new WireMessage { Type = type, Index = r.ReadInt32(), Width = r.ReadInt32(), Height = r.ReadInt32() },
+            MessageType.ScreenFrame => new WireMessage { Type = type, Index = r.ReadInt32(), Left = r.ReadInt32(), Top = r.ReadInt32(), Width = r.ReadInt32(), Height = r.ReadInt32(), Data = ReadBytes(r) },
+            MessageType.FileStart => new WireMessage { Type = type, RequestId = r.ReadString(), Text = r.ReadString(), Size = r.ReadInt64(), Total = r.ReadInt64(), IsDirectory = r.ReadBoolean() },
+            MessageType.FileData => new WireMessage { Type = type, RequestId = r.ReadString(), Data = ReadBytes(r) },
+            MessageType.FileEnd => new WireMessage { Type = type, RequestId = r.ReadString() },
+            MessageType.TransferDone => new WireMessage { Type = type, RequestId = r.ReadString(), Accepted = r.ReadBoolean(), Text = r.ReadString() },
+            _ => new WireMessage { Type = type }, // a newer peer's message: ignored instead of breaking the link
         };
+    }
+
+    private static byte[] ReadBytes(BinaryReader reader)
+    {
+        var length = reader.ReadInt32();
+        if (length < 0 || length > reader.BaseStream.Length - reader.BaseStream.Position) throw new InvalidDataException("Longitud de datos inválida.");
+        return reader.ReadBytes(length);
     }
 
     private static WireMessage ReadHello(BinaryReader reader)
@@ -200,7 +265,7 @@ public sealed class WireMessage
             }
             if (reader.BaseStream.Length - reader.BaseStream.Position >= 4) capabilities = reader.ReadInt32();
         }
-        return new WireMessage { Type = MessageType.Hello, MachineName = name, ScreenWidth = width, ScreenHeight = height, Displays = displays.ToArray(), SupportsSpatialMap = (capabilities & 1) != 0, HasSpatialMap = (capabilities & 2) != 0 };
+        return new WireMessage { Type = MessageType.Hello, MachineName = name, ScreenWidth = width, ScreenHeight = height, Displays = displays.ToArray(), SupportsSpatialMap = (capabilities & 1) != 0, HasSpatialMap = (capabilities & 2) != 0, SupportsExtras = (capabilities & 4) != 0 };
     }
 
     private static WireMessage ReadMap(BinaryReader reader)

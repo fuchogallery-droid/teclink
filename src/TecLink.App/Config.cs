@@ -24,6 +24,10 @@ public sealed class AppConfig
     public string Theme { get; set; } = "system";
     public bool UseSpatialMap { get; set; }
     public List<ScreenPlacement> ScreenPositions { get; set; } = new();
+    /// <summary>Windows scale 1–20; 0 = never chosen in TecLink, keep what Windows has.</summary>
+    public int PointerSpeedLevel { get; set; }
+    public string CursorStyle { get; set; } = "system";
+    public int CursorSizePercent { get; set; } = 100;
 
     private static string ConfigPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TecLink", "config.json");

@@ -134,7 +134,7 @@ public sealed class PeerConnection : IAsyncDisposable
             {
                 if (!await ReadExactAsync(header, 4, ct)) break;
                 var length = BitConverter.ToInt32(header, 0);
-                if (length is < 0 or > 1_000_000) break; // sanity guard against a corrupt stream
+                if (length is < 0 or > 32_000_000) break; // sanity guard against a corrupt stream
 
                 var payload = new byte[length];
                 if (!await ReadExactAsync(payload, length, ct)) break;
@@ -151,6 +151,10 @@ public sealed class PeerConnection : IAsyncDisposable
         }
         catch (SocketException)
         {
+        }
+        catch (Exception ex) when (ex is InvalidDataException or EndOfStreamException)
+        {
+            // corrupt frame: drop the link and let the caller reconnect
         }
 
         SignalDisconnected();

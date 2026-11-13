@@ -13,6 +13,15 @@ public enum MessageType : byte
     SwitchToLocal = 9,
     SpatialMap = 10,
     SpatialMapAck = 11,
+    PointerSettings = 12,
+    ScreenStart = 13,
+    ScreenStop = 14,
+    ScreenFrame = 15,
+    ScreenAck = 16,
+    FileStart = 17,
+    FileData = 18,
+    FileEnd = 19,
+    TransferDone = 20,
 }
 
 public enum MouseButtonKind : byte
