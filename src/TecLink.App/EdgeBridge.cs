@@ -457,7 +457,13 @@ public sealed class EdgeBridge : IDisposable
             (_config.ScreenRoutes, _config.ScreenOrder, _config.AutomaticSwitching, _config.RoutesConfigured, _config.Theme) = previous;
             throw;
         }
+        if (_peerControlling && _connection is { } peer)
+        {
+            _peerControlling = false;
+            _ = peer.SendAsync(WireMessage.SwitchToRemote()); // ask an active remote controller to yield first
+        }
         SwitchToLocal(force: true);
+        ReleaseAllInjectedInput();
         StatusChanged?.Invoke("Mapa guardado. Los cambios ya están activos.");
     }
 

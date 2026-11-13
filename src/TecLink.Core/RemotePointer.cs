@@ -15,7 +15,7 @@ public sealed class RemotePointer
         Position = new Point(Math.Clamp(entry.X, 0, size.Width - 1), Math.Clamp(entry.Y, 0, size.Height - 1));
     }
 
-    // X may cross an edge so the caller can hand control back. Stored coordinates
+    // Proposed coordinates may cross an edge so the caller can hand control back. Stored coordinates
     // remain bounded; sitting at the top/bottom never accumulates invisible movement.
     public Point Advance(int deltaX, int deltaY)
     {
