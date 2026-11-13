@@ -37,6 +37,9 @@ public sealed class EdgeBridge : IDisposable
     private int _anchorX, _anchorY;
     private int _entryX, _entryY;
     private RemotePointer? _remotePointer;
+    private string _remoteName = "Otra PC";
+    private DisplayInfo[] _remoteDisplays = Array.Empty<DisplayInfo>();
+    private (DisplayInfo Source, ScreenEdge Exit, DisplayInfo Target, ScreenEdge Entry)? _activeRoute;
 
     // Tracks keys/buttons we've injected on THIS machine because the peer is controlling
     // us, so a dropped connection (or the peer handing control back) mid-keypress doesn't
@@ -149,6 +152,9 @@ public sealed class EdgeBridge : IDisposable
                 _remoteWidth = msg.ScreenWidth;
                 _remoteHeight = msg.ScreenHeight;
                 _remoteKnown = true;
+                _remoteName = msg.MachineName ?? "Otra PC";
+                _remoteDisplays = msg.Displays.Length > 0 ? msg.Displays
+                    : new[] { new DisplayInfo("desktop", 0, 0, _remoteWidth, _remoteHeight) };
                 StatusChanged?.Invoke($"Vinculado con {msg.MachineName} ({_remoteWidth}x{_remoteHeight})");
                 break;
             case MessageType.MouseMove:
@@ -199,14 +205,20 @@ public sealed class EdgeBridge : IDisposable
     {
         if (_mode == BridgeMode.Local)
         {
-            if (_connection is null || !_remoteKnown || _peerControlling) return;
+            if (_connection is null || !_remoteKnown || _peerControlling || !_config.AutomaticSwitching) return;
             var desktop = _desktop;
-            if (!desktop.IsExitEdge(new Point(e.X, e.Y), _config.EdgeToPeer == EdgeDirection.Right)) return;
-
-            var entryX = _config.EdgeToPeer == EdgeDirection.Right ? 0 : _remoteWidth - 1;
-            var localY = desktop.ToWire(new Point(e.X, e.Y)).Y;
-            var entryY = (int)((long)localY * (_remoteHeight - 1) / Math.Max(1, desktop.Bounds.Height - 1));
-            EngageRemote(e.X, e.Y, entryX, entryY);
+            var point = new Point(e.X, e.Y);
+            var source = LocalDisplays().FirstOrDefault(s => s.Bounds.Contains(point));
+            if (source is null) return;
+            var route = RouteFor(source.Id);
+            if (route.Exit is not { } exit || !desktop.IsExitEdge(point, exit)) return;
+            var target = _remoteDisplays.FirstOrDefault(s => s.Id == route.TargetId)
+                ?? new DisplayInfo("desktop", 0, 0, _remoteWidth, _remoteHeight);
+            var entry = ScreenRouting.EntryPoint(target, route.Entry,
+                ScreenRouting.Fraction(source.Bounds, point, exit), _remoteDisplays);
+            if (entry is null) return;
+            EngageRemote(e.X, e.Y, entry.Value.X, entry.Value.Y);
+            _activeRoute = (source, exit, target, route.Entry);
         }
     }
 
@@ -214,22 +226,29 @@ public sealed class EdgeBridge : IDisposable
     {
         if (_mode == BridgeMode.Remote && _connection is { } connection && _remotePointer is { } pointer)
         {
+            var previous = pointer.Position;
             var target = pointer.Advance(dx, dy);
-            var targetX = target.X;
-            var targetY = target.Y;
 
-            var crossedBackLeft = _config.EdgeToPeer == EdgeDirection.Right && targetX < 0;
-            var crossedBackRight = _config.EdgeToPeer == EdgeDirection.Left && targetX > _remoteWidth - 1;
-
-            if (crossedBackLeft || crossedBackRight)
+            if (_activeRoute is { } route && ScreenRouting.Crossed(previous, target, route.Target.Bounds, route.Entry))
             {
-                var excess = crossedBackLeft ? -targetX : targetX - (_remoteWidth - 1);
-                var newLocalX = _anchorX + (_config.EdgeToPeer == EdgeDirection.Right ? -excess : excess);
-                var bounds = _desktop.Bounds;
-                var localY = bounds.Top + (int)((long)targetY * (bounds.Height - 1) / Math.Max(1, _remoteHeight - 1));
-                var resume = _desktop.Clamp(new Point(newLocalX, localY));
-                SwitchToLocal(resume.X, resume.Y);
-                return;
+                var along = ScreenRouting.Vertical(route.Entry) ? previous.Y : previous.X;
+                var edge = ScreenRouting.OnEdge(route.Target.Bounds, route.Entry, along);
+                if (new DesktopLayout(_remoteDisplays.Select(d => d.Bounds)).IsExitEdge(edge, route.Entry))
+                {
+                    var resume = ScreenRouting.EntryPoint(route.Source, route.Exit,
+                        ScreenRouting.Fraction(route.Target.Bounds, previous, route.Entry), LocalDisplays())
+                        ?? _desktop.Clamp(new Point(_anchorX, _anchorY));
+                    resume = route.Exit switch
+                    {
+                        ScreenEdge.Left => new Point(resume.X + 1, resume.Y),
+                        ScreenEdge.Right => new Point(resume.X - 1, resume.Y),
+                        ScreenEdge.Top => new Point(resume.X, resume.Y + 1),
+                        _ => new Point(resume.X, resume.Y - 1),
+                    };
+                    resume = _desktop.Clamp(resume);
+                    SwitchToLocal(resume.X, resume.Y);
+                    return;
+                }
             }
 
             _ = connection.SendAsync(WireMessage.MouseMove(pointer.Position.X, pointer.Position.Y));
@@ -301,6 +320,9 @@ public sealed class EdgeBridge : IDisposable
         _entryX = entryX;
         _entryY = Math.Clamp(entryY, 0, _remoteHeight - 1);
         _remotePointer = new RemotePointer(new Size(_remoteWidth, _remoteHeight), new Point(_entryX, _entryY));
+        var source = LocalDisplays().FirstOrDefault(d => d.Bounds.Contains(new Point(anchorX, anchorY))) ?? LocalDisplays()[0];
+        var legacyExit = _config.EdgeToPeer == EdgeDirection.Left ? ScreenEdge.Left : ScreenEdge.Right;
+        _activeRoute = (source, legacyExit, new DisplayInfo("desktop", 0, 0, _remoteWidth, _remoteHeight), ScreenRouting.Opposite(legacyExit));
 
         _mouseHook.Swallow = true;
         _keyboardHook.Swallow = true;
@@ -317,6 +339,7 @@ public sealed class EdgeBridge : IDisposable
         var wasRemote = _mode == BridgeMode.Remote;
         _mode = BridgeMode.Local;
         _remotePointer = null;
+        _activeRoute = null;
         _mouseHook.Swallow = false;
         _keyboardHook.Swallow = false;
 
@@ -365,7 +388,77 @@ public sealed class EdgeBridge : IDisposable
     private Task SendDesktopAsync(PeerConnection connection)
     {
         var bounds = _desktop.Bounds;
-        return connection.SendAsync(WireMessage.Hello(_config.MachineName, bounds.Width, bounds.Height));
+        var displays = LocalDisplays().Select(d => d with { Left = d.Left - bounds.Left, Top = d.Top - bounds.Top }).ToArray();
+        return connection.SendAsync(WireMessage.Hello(_config.MachineName, bounds.Width, bounds.Height, displays));
+    }
+
+    private static DisplayInfo[] LocalDisplays() => Screen.AllScreens.Select(s =>
+        new DisplayInfo(s.DeviceName, s.Bounds.Left, s.Bounds.Top, s.Bounds.Width, s.Bounds.Height)).ToArray();
+
+    private ScreenRoute RouteFor(string id) => _config.ScreenRoutes.FirstOrDefault(r => r.SourceId == id)
+        ?? new ScreenRoute { SourceId = id, Exit = _config.RoutesConfigured ? null :
+            _config.EdgeToPeer == EdgeDirection.Left ? ScreenEdge.Left : ScreenEdge.Right,
+            Entry = _config.EdgeToPeer == EdgeDirection.Left ? ScreenEdge.Right : ScreenEdge.Left };
+
+    public object ViewState(string status)
+    {
+        var local = LocalDisplays();
+        var order = _config.ScreenOrder;
+        return new
+        {
+            machineName = _config.MachineName, remoteName = _remoteName,
+            connected = _connection is not null && _remoteKnown,
+            mode = _mode == BridgeMode.Remote ? "remote" : _peerControlling ? "peer" : "local", status,
+            automatic = _config.AutomaticSwitching, theme = _config.Theme,
+            host = _config.PeerHost, port = _config.Port, role = _config.Role.ToString(),
+            local = local.OrderBy(d => order.Contains(d.Id) ? order.IndexOf(d.Id) : 1000 + Array.IndexOf(local, d)).Select(d => new
+            {
+                id = d.Id, label = "Pantalla " + (Array.IndexOf(local, d) + 1), width = d.Width, height = d.Height,
+                primary = Screen.PrimaryScreen!.DeviceName == d.Id, route = RouteFor(d.Id),
+                availableEdges = Enum.GetValues<ScreenEdge>().Where(side => ScreenRouting.EntryPoint(d, side, .5, local) is not null),
+            }),
+            remote = _remoteDisplays.Select((d, n) => new
+            {
+                id = d.Id, label = d.Id == "desktop" ? "Escritorio remoto" : "Pantalla " + (n + 1), width = d.Width, height = d.Height,
+                availableEdges = Enum.GetValues<ScreenEdge>().Where(side => ScreenRouting.EntryPoint(d, side, .5, _remoteDisplays) is not null),
+            }),
+        };
+    }
+
+    public void ApplyMap(List<ScreenRoute> routes, List<string> order, bool automatic, string theme)
+    {
+        var local = LocalDisplays();
+        if (routes.GroupBy(r => r.SourceId).Any(g => g.Count() > 1)) throw new ArgumentException("Una pantalla no puede tener dos configuraciones.");
+        foreach (var route in routes)
+        {
+            var source = local.FirstOrDefault(s => s.Id == route.SourceId) ?? throw new ArgumentException("La pantalla cambió. Actualiza el mapa.");
+            if (!Enum.IsDefined(route.Entry) || route.Exit is { } invalid && !Enum.IsDefined(invalid))
+                throw new ArgumentException("El borde elegido no es válido.");
+            if (route.Exit is not { } exit) continue;
+            if (ScreenRouting.EntryPoint(source, exit, .5, local) is null)
+                throw new ArgumentException("Ese borde une pantallas locales. Elige un borde exterior.");
+            if (_remoteKnown)
+            {
+                var target = _remoteDisplays.FirstOrDefault(s => s.Id == route.TargetId)
+                    ?? new DisplayInfo("desktop", 0, 0, _remoteWidth, _remoteHeight);
+                if (ScreenRouting.EntryPoint(target, route.Entry, .5, _remoteDisplays) is null)
+                    throw new ArgumentException("La entrada elegida no tiene un borde exterior disponible.");
+            }
+        }
+        var previous = (_config.ScreenRoutes, _config.ScreenOrder, _config.AutomaticSwitching, _config.RoutesConfigured, _config.Theme);
+        _config.ScreenRoutes = _config.ScreenRoutes.Where(r => !local.Any(d => d.Id == r.SourceId)).Concat(routes).ToList();
+        _config.ScreenOrder = order.Where(id => local.Any(d => d.Id == id)).Distinct()
+            .Concat(_config.ScreenOrder.Where(id => !local.Any(d => d.Id == id))).ToList();
+        _config.AutomaticSwitching = automatic; _config.RoutesConfigured = true;
+        _config.Theme = theme is "dark" or "light" ? theme : "system";
+        try { _config.Save(); }
+        catch
+        {
+            (_config.ScreenRoutes, _config.ScreenOrder, _config.AutomaticSwitching, _config.RoutesConfigured, _config.Theme) = previous;
+            throw;
+        }
+        SwitchToLocal(force: true);
+        StatusChanged?.Invoke("Mapa guardado. Los cambios ya están activos.");
     }
 
     private void OnDisplaySettingsChanged(object? sender, EventArgs e)

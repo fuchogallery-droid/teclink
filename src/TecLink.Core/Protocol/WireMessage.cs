@@ -14,6 +14,7 @@ public sealed class WireMessage
     public string? MachineName { get; init; }
     public int ScreenWidth { get; init; }
     public int ScreenHeight { get; init; }
+    public DisplayInfo[] Displays { get; init; } = Array.Empty<DisplayInfo>();
 
     // MouseMove (coordinates relative to the receiver's virtual desktop origin).
     // A single monitor at (0,0) retains the v0.2.0 representation.
@@ -35,12 +36,13 @@ public sealed class WireMessage
     // ClipboardText
     public string? Text { get; init; }
 
-    public static WireMessage Hello(string machineName, int screenWidth, int screenHeight) => new()
+    public static WireMessage Hello(string machineName, int screenWidth, int screenHeight, DisplayInfo[]? displays = null) => new()
     {
         Type = MessageType.Hello,
         MachineName = machineName,
         ScreenWidth = screenWidth,
         ScreenHeight = screenHeight,
+        Displays = displays ?? Array.Empty<DisplayInfo>(),
     };
 
     public static WireMessage MouseMove(int x, int y) => new() { Type = MessageType.MouseMove, X = x, Y = y };
@@ -83,6 +85,16 @@ public sealed class WireMessage
                 w.Write(MachineName ?? "");
                 w.Write(ScreenWidth);
                 w.Write(ScreenHeight);
+                if (Displays.Length > 0)
+                {
+                    w.Write(0x54434C4D); // optional monitor metadata; older decoders ignore the tail
+                    w.Write(Displays.Length);
+                    foreach (var display in Displays)
+                    {
+                        w.Write(display.Id); w.Write(display.Left); w.Write(display.Top);
+                        w.Write(display.Width); w.Write(display.Height);
+                    }
+                }
                 break;
             case MessageType.MouseMove:
                 w.Write(X);
@@ -122,13 +134,7 @@ public sealed class WireMessage
 
         return type switch
         {
-            MessageType.Hello => new WireMessage
-            {
-                Type = type,
-                MachineName = r.ReadString(),
-                ScreenWidth = r.ReadInt32(),
-                ScreenHeight = r.ReadInt32(),
-            },
+            MessageType.Hello => ReadHello(r),
             MessageType.MouseMove => new WireMessage { Type = type, X = r.ReadInt32(), Y = r.ReadInt32() },
             MessageType.MouseButton => new WireMessage
             {
@@ -151,5 +157,26 @@ public sealed class WireMessage
             MessageType.SwitchToLocal => new WireMessage { Type = type },
             _ => throw new InvalidDataException($"Unknown message type: {type}"),
         };
+    }
+
+    private static WireMessage ReadHello(BinaryReader reader)
+    {
+        var name = reader.ReadString(); var width = reader.ReadInt32(); var height = reader.ReadInt32();
+        var displays = new List<DisplayInfo>();
+        if (reader.BaseStream.Length - reader.BaseStream.Position >= 8 && reader.ReadInt32() == 0x54434C4D)
+        {
+            var count = reader.ReadInt32();
+            if (count is < 0 or > 64) throw new InvalidDataException("Número de pantallas inválido.");
+            for (var n = 0; n < count; n++)
+            {
+                var display = new DisplayInfo(reader.ReadString(), reader.ReadInt32(), reader.ReadInt32(), reader.ReadInt32(), reader.ReadInt32());
+                if (display.Width <= 0 || display.Height <= 0 || display.Left < 0 || display.Top < 0 ||
+                    (long)display.Left + display.Width > width || (long)display.Top + display.Height > height)
+                    throw new InvalidDataException("Geometría de pantalla inválida.");
+                if (displays.Any(d => d.Id == display.Id)) throw new InvalidDataException("Identificador de pantalla repetido.");
+                displays.Add(display);
+            }
+        }
+        return new WireMessage { Type = MessageType.Hello, MachineName = name, ScreenWidth = width, ScreenHeight = height, Displays = displays.ToArray() };
     }
 }

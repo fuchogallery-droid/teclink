@@ -7,6 +7,8 @@ using System.Runtime.InteropServices;
 using System.Net;
 using System.Net.Sockets;
 using System.Buffers.Binary;
+using System.Text.Json;
+using TecLink.App;
 
 var checks = 0;
 void Check(bool condition, string description)
@@ -52,6 +54,37 @@ var hello = WireMessage.Decode(WireMessage.Hello("jenav", desktop.Bounds.Width, 
 Check(hello.ScreenWidth == 4400 && hello.ScreenHeight == 3560, "Existing Hello protocol carries virtual dimensions");
 var mouse = WireMessage.Decode(WireMessage.MouseMove(2159, 1159).Encode());
 Check(mouse.X == 2159 && mouse.Y == 1159, "Mouse protocol remains byte-compatible");
+var screenInfo = monitors.Select((r, n) => new DisplayInfo("display" + n, r.Left, r.Top, r.Width, r.Height)).ToArray();
+var topEntry = ScreenRouting.EntryPoint(screenInfo[0], ScreenEdge.Top, .3, screenInfo);
+Check(topEntry is not null && topEntry.Value.X >= 1680 && topEntry.Value.Y == 0, "Entry skips the portion of a side covered by another local monitor");
+var joinedInfo = new[] { new DisplayInfo("a", 0, 0, 1920, 1080), new DisplayInfo("b", 1920, 0, 1920, 1080) };
+Check(ScreenRouting.EntryPoint(joinedInfo[1], ScreenEdge.Left, .5, joinedInfo) is null, "Fully internal border cannot become a remote entry");
+foreach (var side in Enum.GetValues<ScreenEdge>())
+{
+    var info = new DisplayInfo("single", 0, 0, 1920, 1080);
+    var entryPoint = ScreenRouting.EntryPoint(info, side, .5, new[] { info });
+    Check(entryPoint is not null && single.IsExitEdge(entryPoint.Value, side), "All four real screen edges support routing");
+    Check(ScreenRouting.Opposite(ScreenRouting.Opposite(side)) == side, "Opposite edge is reversible");
+}
+Check(ScreenRouting.Crossed(new Point(20, 0), new Point(20, -1), new Rectangle(0, 0, 100, 100), ScreenEdge.Top), "Upper-border return is detected");
+Check(ScreenRouting.Crossed(new Point(20, 99), new Point(20, 101), new Rectangle(0, 0, 100, 100), ScreenEdge.Bottom), "Lower-border return is detected");
+var normalized = screenInfo.Select(d => d with { Left = d.Left - desktop.Bounds.Left, Top = d.Top - desktop.Bounds.Top }).ToArray();
+var extendedHello = WireMessage.Hello("jenav", 4400, 3560, normalized);
+var decodedHello = WireMessage.Decode(extendedHello.Encode());
+Check(decodedHello.Displays.SequenceEqual(normalized), "Optional Hello monitor metadata round trips");
+Check(WireMessage.Decode(WireMessage.Hello("old", 1920, 1080).Encode()).Displays.Length == 0, "Old Hello without metadata still decodes");
+using (var legacyReader = new BinaryReader(new MemoryStream(extendedHello.Encode())))
+{
+    Check(legacyReader.ReadByte() == (byte)MessageType.Hello && legacyReader.ReadString() == "jenav" && legacyReader.ReadInt32() == 4400 && legacyReader.ReadInt32() == 3560,
+        "Old decoder can read unchanged Hello prefix and ignore the optional tail");
+}
+var oldConfig = JsonSerializer.Deserialize<AppConfig>("{\"Role\":1,\"PeerHost\":\"192.168.12.183\",\"Port\":51777,\"EdgeToPeer\":0}")!;
+Check(oldConfig.AutomaticSwitching && !oldConfig.RoutesConfigured && oldConfig.EdgeToPeer == EdgeDirection.Left, "Old client config keeps automatic left-edge routing");
+oldConfig.ScreenOrder = new List<string> { "display1", "display0" };
+oldConfig.ScreenRoutes.Add(new ScreenRoute { SourceId = "display1", Exit = ScreenEdge.Top, TargetId = "remote1", Entry = ScreenEdge.Bottom });
+var roundTripConfig = JsonSerializer.Deserialize<AppConfig>(JsonSerializer.Serialize(oldConfig))!;
+Check(roundTripConfig.ScreenOrder[0] == "display1" && roundTripConfig.ScreenRoutes[0].Exit == ScreenEdge.Top, "Visual order and per-screen route persist in config");
+
 var pointer = new RemotePointer(new Size(1920, 1080), new Point(500, 500));
 for (var n = 0; n < 200; n++) pointer.Advance(1, 0);
 Check(pointer.Position == new Point(700, 500), "Hardware deltas accumulate instead of snapping back to entry");

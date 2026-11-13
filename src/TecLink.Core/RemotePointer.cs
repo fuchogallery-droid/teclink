@@ -20,8 +20,8 @@ public sealed class RemotePointer
     public Point Advance(int deltaX, int deltaY)
     {
         var x = (long)Position.X + deltaX;
-        var y = Math.Clamp((long)Position.Y + deltaY, 0, _size.Height - 1);
-        Position = new Point((int)Math.Clamp(x, 0, _size.Width - 1), (int)y);
-        return new Point((int)Math.Clamp(x, int.MinValue, int.MaxValue), (int)y);
+        var y = (long)Position.Y + deltaY;
+        Position = new Point((int)Math.Clamp(x, 0, _size.Width - 1), (int)Math.Clamp(y, 0, _size.Height - 1));
+        return new Point((int)Math.Clamp(x, int.MinValue, int.MaxValue), (int)Math.Clamp(y, int.MinValue, int.MaxValue));
     }
 }
