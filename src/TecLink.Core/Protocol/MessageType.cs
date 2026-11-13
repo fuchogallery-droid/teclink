@@ -11,6 +11,8 @@ public enum MessageType : byte
     Heartbeat = 7,
     SwitchToRemote = 8,
     SwitchToLocal = 9,
+    SpatialMap = 10,
+    SpatialMapAck = 11,
 }
 
 public enum MouseButtonKind : byte

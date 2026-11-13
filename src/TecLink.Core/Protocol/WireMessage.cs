@@ -15,6 +15,11 @@ public sealed class WireMessage
     public int ScreenWidth { get; init; }
     public int ScreenHeight { get; init; }
     public DisplayInfo[] Displays { get; init; } = Array.Empty<DisplayInfo>();
+    public bool SupportsSpatialMap { get; init; }
+    public bool HasSpatialMap { get; init; }
+    public string? RequestId { get; init; }
+    public ScreenPlacement[] Placements { get; init; } = Array.Empty<ScreenPlacement>();
+    public bool Accepted { get; init; }
 
     // MouseMove (coordinates relative to the receiver's virtual desktop origin).
     // A single monitor at (0,0) retains the v0.2.0 representation.
@@ -36,13 +41,14 @@ public sealed class WireMessage
     // ClipboardText
     public string? Text { get; init; }
 
-    public static WireMessage Hello(string machineName, int screenWidth, int screenHeight, DisplayInfo[]? displays = null) => new()
+    public static WireMessage Hello(string machineName, int screenWidth, int screenHeight, DisplayInfo[]? displays = null, bool supportsSpatialMap = false, bool hasSpatialMap = false) => new()
     {
         Type = MessageType.Hello,
         MachineName = machineName,
         ScreenWidth = screenWidth,
         ScreenHeight = screenHeight,
         Displays = displays ?? Array.Empty<DisplayInfo>(),
+        SupportsSpatialMap = supportsSpatialMap, HasSpatialMap = hasSpatialMap,
     };
 
     public static WireMessage MouseMove(int x, int y) => new() { Type = MessageType.MouseMove, X = x, Y = y };
@@ -72,6 +78,8 @@ public sealed class WireMessage
     public static WireMessage SwitchToRemote() => new() { Type = MessageType.SwitchToRemote };
 
     public static WireMessage SwitchToLocal() => new() { Type = MessageType.SwitchToLocal };
+    public static WireMessage Map(string requestId, ScreenPlacement[] positions) => new() { Type = MessageType.SpatialMap, RequestId = requestId, Placements = positions };
+    public static WireMessage MapAck(string requestId, bool accepted, string? error = null) => new() { Type = MessageType.SpatialMapAck, RequestId = requestId, Accepted = accepted, Text = error };
 
     public byte[] Encode()
     {
@@ -94,6 +102,7 @@ public sealed class WireMessage
                         w.Write(display.Id); w.Write(display.Left); w.Write(display.Top);
                         w.Write(display.Width); w.Write(display.Height);
                     }
+                    w.Write((SupportsSpatialMap ? 1 : 0) | (HasSpatialMap ? 2 : 0));
                 }
                 break;
             case MessageType.MouseMove:
@@ -119,6 +128,13 @@ public sealed class WireMessage
             case MessageType.Heartbeat:
             case MessageType.SwitchToRemote:
             case MessageType.SwitchToLocal:
+                break;
+            case MessageType.SpatialMap:
+                w.Write(RequestId ?? ""); w.Write(Placements.Length);
+                foreach (var p in Placements) { w.Write(p.Id); w.Write(p.Remote); w.Write(p.X); w.Write(p.Y); }
+                break;
+            case MessageType.SpatialMapAck:
+                w.Write(RequestId ?? ""); w.Write(Accepted); w.Write(Text ?? "");
                 break;
         }
 
@@ -155,6 +171,8 @@ public sealed class WireMessage
             MessageType.Heartbeat => new WireMessage { Type = type },
             MessageType.SwitchToRemote => new WireMessage { Type = type },
             MessageType.SwitchToLocal => new WireMessage { Type = type },
+            MessageType.SpatialMap => ReadMap(r),
+            MessageType.SpatialMapAck => new WireMessage { Type = type, RequestId = r.ReadString(), Accepted = r.ReadBoolean(), Text = r.ReadString() },
             _ => throw new InvalidDataException($"Unknown message type: {type}"),
         };
     }
@@ -163,6 +181,7 @@ public sealed class WireMessage
     {
         var name = reader.ReadString(); var width = reader.ReadInt32(); var height = reader.ReadInt32();
         var displays = new List<DisplayInfo>();
+        var capabilities = 0;
         if (reader.BaseStream.Length - reader.BaseStream.Position >= 8 && reader.ReadInt32() == 0x54434C4D)
         {
             var count = reader.ReadInt32();
@@ -176,7 +195,17 @@ public sealed class WireMessage
                 if (displays.Any(d => d.Id == display.Id)) throw new InvalidDataException("Identificador de pantalla repetido.");
                 displays.Add(display);
             }
+            if (reader.BaseStream.Length - reader.BaseStream.Position >= 4) capabilities = reader.ReadInt32();
         }
-        return new WireMessage { Type = MessageType.Hello, MachineName = name, ScreenWidth = width, ScreenHeight = height, Displays = displays.ToArray() };
+        return new WireMessage { Type = MessageType.Hello, MachineName = name, ScreenWidth = width, ScreenHeight = height, Displays = displays.ToArray(), SupportsSpatialMap = (capabilities & 1) != 0, HasSpatialMap = (capabilities & 2) != 0 };
+    }
+
+    private static WireMessage ReadMap(BinaryReader reader)
+    {
+        var request = reader.ReadString(); var count = reader.ReadInt32();
+        if (count is < 0 or > 128) throw new InvalidDataException("Número de pantallas inválido en el mapa.");
+        var positions = new ScreenPlacement[count];
+        for (var n = 0; n < count; n++) positions[n] = new ScreenPlacement(reader.ReadString(), reader.ReadBoolean(), reader.ReadInt32(), reader.ReadInt32());
+        return new WireMessage { Type = MessageType.SpatialMap, RequestId = request, Placements = positions };
     }
 }

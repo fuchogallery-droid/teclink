@@ -156,4 +156,32 @@ Check(frames[^1].Type == MessageType.SwitchToLocal, "No old movement appears aft
 var movementFrames = frames.Count(m => m.Type == MessageType.MouseMove);
 Check(movementFrames < 1000, "High-rate movement is coalesced rather than backlogged");
 Console.WriteLine($"TCP burst: 2000 movement proposals -> {movementFrames} movement frames; all keys/buttons ordered");
-Console.WriteLine($"PASS: {checks} geometry, input and TCP regression checks");
+var mapLocal = new[] { new DisplayInfo("a", 0, 0, 1000, 800), new DisplayInfo("hdmi", -1200, 0, 1200, 800) };
+var mapRemote = new[] { new DisplayInfo("b", 0, 0, 1000, 800) };
+var placements = new[] { new ScreenPlacement("a", false, 0, 0), new ScreenPlacement("hdmi", false, -1200, 0), new ScreenPlacement("b", true, 1000, 0) };
+var spatial = SpatialMap.Build(mapLocal, mapRemote, placements);
+Check(spatial.Count == 3, "Three monitor map contains local seams and remote exits");
+var toPeer = SpatialNavigation.Find(mapLocal[0], new Point(998, 400), new Point(999, 400), spatial, mapLocal, mapRemote);
+Check(toPeer is { Route.TargetRemote: true } && toPeer.Position == new Point(1, 400), "Right edge enters peer left with inward offset");
+var toHdmi = SpatialNavigation.Find(mapLocal[0], new Point(1, 400), new Point(0, 400), spatial, mapLocal, mapRemote);
+Check(toHdmi is { Route.TargetRemote: false } && toHdmi.Position == new Point(-2, 400), "Local HDMI follows virtual map");
+var mirror = placements.Select(p => p with { Remote = !p.Remote }).ToArray();
+var peerRoutes = SpatialMap.Build(mapRemote, mapLocal, mirror);
+Check(peerRoutes.Count == 1 && peerRoutes[0].Exit == ScreenEdge.Left, "Shared map reverses ownership consistently");
+var vertical = placements.Select(p => p.Id == "b" ? p with { X = 0, Y = -800 } : p).ToArray();
+Check(SpatialMap.Build(mapLocal, mapRemote, vertical).Any(r => r.TargetRemote && r.Exit == ScreenEdge.Top && r.Entry == ScreenEdge.Bottom), "Vertical placement derives top and bottom");
+var corner = placements.Select(p => p.Id == "b" ? p with { X = 1000, Y = 800 } : p).ToArray();
+Check(!SpatialMap.Build(mapLocal, mapRemote, corner).Any(r => r.TargetRemote), "Corner contact creates no route");
+var partial = placements.Select(p => p.Id == "b" ? p with { Y = 400 } : p).ToArray();
+var partialRoutes = SpatialMap.Build(mapLocal, mapRemote, partial);
+Check(SpatialNavigation.Find(mapLocal[0], new Point(998, 100), new Point(999, 100), partialRoutes, mapLocal, mapRemote) is null, "Noncontact edge segment remains closed");
+Check(SpatialNavigation.Find(mapLocal[0], new Point(998, 600), new Point(999, 600), partialRoutes, mapLocal, mapRemote)?.Position == new Point(1, 200), "Partial seam preserves global alignment");
+try { SpatialMap.Build(mapLocal, mapRemote, placements.Select(p => p.Id == "b" ? p with { X = 500 } : p).ToArray()); Check(false, "Overlap rejected"); } catch (ArgumentException) { Check(true, "Overlap rejected"); }
+try { SpatialMap.Build(mapLocal, mapRemote, placements.Take(2).ToArray()); Check(false, "Missing screen rejected"); } catch (ArgumentException) { Check(true, "Missing screen rejected"); }
+var mapWire = WireMessage.Decode(WireMessage.Map("request", placements).Encode());
+Check(mapWire.RequestId == "request" && mapWire.Placements.SequenceEqual(placements), "Spatial map protocol round trip");
+var ackWire = WireMessage.Decode(WireMessage.MapAck("request", false, "error").Encode());
+Check(!ackWire.Accepted && ackWire.Text == "error", "Map rejection acknowledgement round trip");
+var capable = WireMessage.Decode(WireMessage.Hello("peer", 1000, 800, mapRemote, true, true).Encode());
+Check(capable.SupportsSpatialMap && capable.HasSpatialMap, "Capability negotiation round trip");
+Console.WriteLine($"PASS: {checks} geometry, input, map and TCP regression checks");

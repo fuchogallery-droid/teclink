@@ -7,6 +7,7 @@ public sealed class RemotePointer
 {
     private readonly Size _size;
     public Point Position { get; private set; }
+    public void SetPosition(Point point) => Position = new Point(Math.Clamp(point.X, 0, _size.Width - 1), Math.Clamp(point.Y, 0, _size.Height - 1));
 
     public RemotePointer(Size size, Point entry)
     {

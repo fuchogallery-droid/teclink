@@ -9,7 +9,7 @@ namespace TecLink.App;
 public sealed class ControlPanelForm : Form
 {
     private const string Origin = "https://panel.teclink.local";
-    private readonly WebView2 _web = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.FromArgb(16, 21, 32) };
+    private readonly WebView2 _web = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.FromArgb(8, 8, 8) };
     private readonly EdgeBridge _bridge;
     private readonly Func<string> _status;
     private bool _ready;
@@ -24,6 +24,7 @@ public sealed class ControlPanelForm : Form
         public List<string> Order { get; set; } = new();
         public bool Automatic { get; set; } = true;
         public string Theme { get; set; } = "system";
+        public List<ScreenPlacement>? Placements { get; set; }
     }
 
     public ControlPanelForm(EdgeBridge bridge, Func<string> status)
@@ -65,7 +66,7 @@ public sealed class ControlPanelForm : Form
         }
     }
 
-    private void OnMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
+    private async void OnMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
         if (!e.Source.StartsWith(Origin + "/", StringComparison.OrdinalIgnoreCase)) return;
         try
@@ -77,8 +78,11 @@ public sealed class ControlPanelForm : Form
                 case "ready": RefreshState(); break;
                 case "save":
                     var request = root.GetProperty("map").Deserialize<MapRequest>(Json) ?? throw new ArgumentException("El mapa está vacío.");
-                    _bridge.ApplyMap(request.Routes, request.Order, request.Automatic, request.Theme);
-                    Post(new { type = "saved", state = _bridge.ViewState(_status()) });
+                    var message = request.Placements is { } positions
+                        ? await _bridge.ApplySpatialMapAsync(positions, request.Automatic, request.Theme)
+                        : null;
+                    if (request.Placements is null) _bridge.ApplyMap(request.Routes, request.Order, request.Automatic, request.Theme);
+                    Post(new { type = "saved", state = _bridge.ViewState(_status()), message });
                     break;
                 case "toggleControl": _bridge.ToggleControl(); RefreshState(); break;
             }

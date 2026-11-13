@@ -1,213 +1,117 @@
 (() => {
-  'use strict';
-  const $ = id => document.getElementById(id);
-  const edges = ['left', 'right', 'top', 'bottom'];
-  const names = { left: 'Izquierda', right: 'Derecha', top: 'Arriba', bottom: 'Abajo' };
-  const arrows = { left: '←', right: '→', top: '↑', bottom: '↓' };
+  const $ = id => document.getElementById(id), M = TecMap;
+  let state, draft, selected, dirty = false, saving = false, view = { scale: .1, x: 0, y: 0 }, drag;
+  const preview = new URLSearchParams(location.search).has('preview');
+  const rects = () => M.rectangles(state, draft.placements);
+  const selectedRect = () => rects().find(s => M.key(s) === selected);
   const opposite = { left: 'right', right: 'left', top: 'bottom', bottom: 'top' };
-  const monitorSvg = '<svg viewBox="0 0 48 36" aria-hidden="true"><rect x="2" y="2" width="44" height="26" rx="3"/><path d="M16 34h16m-8-6v6"/></svg>';
-  const escape = value => String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
-  let state, draft, selected, dirty = false, saving = false, dragged, toastTimer;
-
-  function applyTheme(theme) {
-    const next = theme === 'system' ? (matchMedia('(prefers-color-scheme:dark)').matches ? 'dark' : 'light') : theme;
-    if (document.body.dataset.theme === next) return;
-    document.body.classList.add('theme-switch');
-    document.body.dataset.theme = next;
-    void document.body.offsetHeight;
-    requestAnimationFrame(() => requestAnimationFrame(() => document.body.classList.remove('theme-switch')));
-  }
-  function markDirty() {
-    dirty = true;
-    $('save-heading').textContent = 'Cambios pendientes';
-    $('save-message').textContent = 'Guarda el mapa para activar las nuevas salidas.';
-    $('save').innerHTML = 'Guardar mapa <span aria-hidden="true">↗</span>';
-  }
-  function toast(message) {
-    clearTimeout(toastTimer);
-    $('toast').textContent = message;
-    $('toast').classList.add('visible');
-    toastTimer = setTimeout(() => $('toast').classList.remove('visible'), 4500);
-  }
-  function route() { return draft.routes.find(r => r.sourceId === selected); }
-  function current() { return state.local.find(s => s.id === selected); }
-  function targetOf(r) {
-    return state.remote.find(s => s.id === r.targetId) || { id: '', label: 'Escritorio de la otra PC', availableEdges: edges };
+  const names = { left: 'Izquierda', right: 'Derecha', top: 'Arriba', bottom: 'Abajo' };
+  function toast(message) { $('toast').textContent = message; $('toast').classList.add('visible'); setTimeout(() => $('toast').classList.remove('visible'), 4500); }
+  function theme() { document.documentElement.dataset.theme = draft.theme === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : draft.theme; }
+  function send(message) {
+    if (!preview) { window.chrome?.webview?.postMessage(message); return; }
+    window.__tecMessages.push(message);
+    if (message.type === 'save') setTimeout(() => receive({ type: 'saved', state: { ...state, ...message.map, spatialEnabled: true }, message: 'Mapa guardado en ambas PCs.' }), 180);
   }
   function receive(message) {
-    if (message.type === 'error') {
-      saving = false;
-      renderAll();
-      markDirty();
-      $('save-message').textContent = 'No se guardó el mapa. Revisa el aviso.';
-      toast(message.message);
-      return;
-    }
+    if (message.type === 'error') { saving = false; dirty = true; toast(message.message); update(); return; }
     if (!message.state) return;
-    const incoming = message.state;
-    const changedScreens = state && JSON.stringify([state.local.map(s => [s.id, s.width, s.height]), state.remote]) !== JSON.stringify([incoming.local.map(s => [s.id, s.width, s.height]), incoming.remote]);
-    state = incoming;
+    state = message.state;
     if (!draft || message.type === 'saved') {
-      draft = { routes: state.local.map(s => structuredClone(s.route)), order: state.local.map(s => s.id), automatic: state.automatic, theme: state.theme };
-      selected = state.local.some(s => s.id === selected) ? selected : state.local[0]?.id;
-      dirty = false; saving = false;
-      renderAll();
-      if (message.type === 'saved') {
-        $('save-heading').textContent = 'Mapa guardado';
-        $('save-message').textContent = 'Las salidas elegidas ya están activas.';
-        $('save').innerHTML = 'Mapa guardado <span aria-hidden="true">✓</span>';
-        toast('Mapa guardado. Tienes el mando local.');
-      }
-    } else if (changedScreens) {
-      draft.order = draft.order.filter(id => state.local.some(s => s.id === id));
-      draft.routes = draft.routes.filter(r => state.local.some(s => s.id === r.sourceId));
-      state.local.forEach(s => {
-        if (!draft.order.includes(s.id)) draft.order.push(s.id);
-        if (!draft.routes.some(r => r.sourceId === s.id)) draft.routes.push(structuredClone(s.route));
-      });
-      if (!state.local.some(s => s.id === selected)) selected = state.local[0]?.id;
-      renderAll();
+      draft = { placements: state.placements?.length ? structuredClone(state.placements) : M.defaults(state), automatic: state.automatic, theme: state.theme || 'system' };
+      dirty = !state.spatialEnabled; saving = false;
+      if (message.type === 'saved') toast(message.message || 'Mapa guardado.');
+    } else {
+      const screens = M.all(state), defaults = M.defaults(state);
+      draft.placements = draft.placements.filter(p => screens.some(s => M.key(s) === M.key(p)));
+      for (const screen of screens) if (!draft.placements.some(p => M.key(p) === M.key(screen))) { draft.placements.push(defaults.find(p => M.key(p) === M.key(screen))); dirty = true; }
     }
-    renderStatus();
+    if (!selected || !rects().some(s => M.key(s) === selected)) selected = M.key(rects()[0] || { id: '', remote: false });
+    $('automatic').checked = draft.automatic; $('theme').value = draft.theme; theme(); buildNodes(); update(); fit();
   }
-  function send(message) {
-    if (window.chrome?.webview) window.chrome.webview.postMessage(message);
-    else if (new URLSearchParams(location.search).get('preview') === '1') {
-      window.__tecMessages.push(structuredClone(message));
-      if (message.type === 'save') setTimeout(() => {
-        const next = structuredClone(state);
-        next.local = message.map.order.map(id => next.local.find(s => s.id === id));
-        next.local.forEach(s => s.route = message.map.routes.find(r => r.sourceId === s.id));
-        next.automatic = message.map.automatic; next.theme = message.map.theme;
-        receive({ type: 'saved', state: next });
-      }, 180);
-    }
+  function fit() {
+    if (!state) return;
+    const b = M.bounds(rects()), board = $('spatial-map');
+    view.scale = Math.max(.015, Math.min(.5, (board.clientWidth - 56) / b.width, (board.clientHeight - 68) / b.height));
+    view.x = (board.clientWidth - b.width * view.scale) / 2 - b.x * view.scale;
+    view.y = (board.clientHeight - b.height * view.scale) / 2 - b.y * view.scale; draw();
   }
-  function renderStatus() {
-    $('connection').classList.toggle('online', state.connected);
-    $('connection').innerHTML = '<i></i>' + (state.connected ? 'Conectado' : 'Sin conexión');
-    $('mode').textContent = state.mode === 'remote' ? 'Controlando la otra PC' : state.mode === 'peer' ? 'La otra PC tiene el mando' : 'Control local';
-    $('toggle-control').disabled = !state.connected;
-    $('local-name').textContent = state.machineName;
-    $('remote-name').textContent = state.connected ? state.remoteName : 'Esperando conexión';
-    $('connection-title').textContent = state.connected ? 'Tus equipos están conectados' : 'Esperando a la otra PC';
-    $('detail-name').textContent = state.machineName;
-    $('detail-remote').textContent = state.connected ? state.remoteName : 'Sin conectar';
-    $('detail-role').textContent = state.role === 'Client' ? 'Cliente' : 'Servidor';
-    $('detail-host').textContent = state.host || 'Esta PC espera la conexión';
-    $('detail-port').textContent = state.port;
-    $('detail-status').textContent = state.status;
-  }
-  function renderMap() {
-    const container = $('local-screens');
-    container.replaceChildren();
-    draft.order.forEach(id => {
-      const screen = state.local.find(s => s.id === id);
-      if (!screen) return;
-      const r = draft.routes.find(item => item.sourceId === id);
-      const card = document.createElement('article');
-      card.className = 'screen-card' + (selected === id ? ' selected' : '');
-      card.draggable = true; card.dataset.id = id;
-      card.setAttribute('aria-label', screen.label + ', arrastra para ordenar');
-      card.innerHTML = (selected === id ? '<span class="screen-selected">Seleccionada</span>' : '') +
-        '<button class="screen-select" aria-pressed="' + (selected === id) + '">' + monitorSvg + '<strong>' + escape(screen.label) + '</strong><small>' + screen.width + ' × ' + screen.height + (screen.primary ? ' · Principal' : '') + '</small></button>' +
-        edges.map(side => '<button class="port ' + side + (r.exit === side ? ' on' : '') + '" data-side="' + side + '" aria-label="Salida ' + names[side].toLowerCase() + ' de ' + escape(screen.label) + '" aria-pressed="' + (r.exit === side) + '" ' + (!screen.availableEdges.includes(side) ? 'disabled title="Este borde une pantallas locales"' : '') + '>' + arrows[side] + '</button>').join('') +
-        '<p class="screen-label">' + (r.exit ? 'Salida: <b>' + names[r.exit].toLowerCase() + '</b>' : 'Sin salida automática') + '</p>';
-      card.querySelector('.screen-select').onclick = () => { selected = id; renderMap(); renderPanel(); renderSummary(); };
-      card.querySelectorAll('.port').forEach(port => port.onclick = () => {
-        selected = id; const r = route(); r.exit = r.exit === port.dataset.side ? null : port.dataset.side;
-        chooseEntry(); markDirty(); renderMap(); renderPanel(); renderSummary();
+  function buildNodes() {
+    $('map-nodes').replaceChildren();
+    rects().forEach((s, n) => {
+      const node = document.createElement('button'); node.className = 'monitor ' + (s.remote ? 'remote-monitor' : 'local-monitor'); node.dataset.key = M.key(s);
+      node.setAttribute('aria-label', `${s.remote ? state.remoteName || 'Otra PC' : state.machineName}, ${s.label || 'Pantalla'}, ${s.width} por ${s.height}`);
+      for (const [tag, value] of [['strong', String(n + 1)], ['span', s.remote ? state.remoteName || 'Otra PC' : state.machineName], ['small', `${s.width} × ${s.height}`]]) { const el = document.createElement(tag); el.textContent = value; node.append(el); }
+      node.addEventListener('pointerdown', e => {
+        if (saving || e.button !== 0) return; e.preventDefault(); e.stopPropagation(); selected = M.key(s);
+        const p = draft.placements.find(p => M.key(p) === selected);
+        drag = { id: e.pointerId, node, startX: e.clientX, startY: e.clientY, x: p.x, y: p.y, original: structuredClone(draft.placements) };
+        node.setPointerCapture(e.pointerId); update();
       });
-      card.addEventListener('dragstart', event => { dragged = id; event.dataTransfer.setData('text/plain', id); event.dataTransfer.effectAllowed = 'move'; });
-      card.addEventListener('dragover', event => { event.preventDefault(); card.classList.add('drag-over'); });
-      card.addEventListener('dragleave', () => card.classList.remove('drag-over'));
-      card.addEventListener('drop', event => {
-        event.preventDefault(); const from = draft.order.indexOf(dragged || event.dataTransfer.getData('text/plain')); const to = draft.order.indexOf(id);
-        if (from >= 0 && to >= 0 && from !== to) { const [item] = draft.order.splice(from, 1); draft.order.splice(to, 0, item); markDirty(); }
-        dragged = null; renderMap(); renderPanel();
+      node.addEventListener('pointermove', e => {
+        if (!drag || drag.node !== node) return;
+        const p = draft.placements.find(p => M.key(p) === selected);
+        Object.assign(p, M.snap(state, draft.placements, selected, drag.x + (e.clientX - drag.startX) / view.scale, drag.y + (e.clientY - drag.startY) / view.scale, 12 / view.scale)); update();
       });
-      container.append(card);
+      const end = () => { if (!drag || drag.node !== node) return; if (M.overlaps(rects())) { draft.placements = drag.original; toast('Las pantallas se superponen. Intenta unir sus bordes.'); } else dirty = true; drag = null; update(); };
+      node.addEventListener('pointerup', end); node.addEventListener('pointercancel', end);
+      node.addEventListener('keydown', e => { const d = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key]; if (d) { e.preventDefault(); selected = M.key(s); move(d[0] * (e.shiftKey ? 8 : 64), d[1] * (e.shiftKey ? 8 : 64)); } });
+      $('map-nodes').append(node);
     });
-    const selectedRoute = route();
-    $('remote-screens').innerHTML = state.remote.length ? state.remote.map(screen =>
-      '<article class="screen-card remote-card' + (selectedRoute?.targetId === screen.id ? ' selected' : '') + '">' +
-      (selectedRoute?.targetId === screen.id ? '<span class="screen-selected">Destino elegido</span>' : '') +
-      '<div class="screen-select">' + monitorSvg + '<strong>' + escape(screen.label) + '</strong><small>' + screen.width + ' × ' + screen.height + '</small></div>' +
-      '<p class="screen-label">' + (selectedRoute?.targetId === screen.id && selectedRoute.exit ? 'Entrada: <b>' + names[selectedRoute.entry].toLowerCase() + '</b>' : 'Disponible como destino') + '</p></article>').join('') :
-      '<div class="empty"><strong>Conecta la otra PC</strong>Sus pantallas aparecerán aquí. Puedes preparar las salidas de esta PC mientras tanto.</div>';
   }
-  function options(select, items, value) {
-    select.replaceChildren(...items.map(item => {
-      const option = new Option(item.text, item.value); option.disabled = !!item.disabled; return option;
-    }));
-    select.value = value ?? '';
+  function draw() {
+    if (!state) return;
+    for (const s of rects()) {
+      const node = [...$('map-nodes').children].find(n => n.dataset.key === M.key(s));
+      if (node) { Object.assign(node.style, { left: `${s.x * view.scale + view.x}px`, top: `${s.y * view.scale + view.y}px`, width: `${s.width * view.scale}px`, height: `${s.height * view.scale}px` }); node.classList.toggle('selected', M.key(s) === selected); node.setAttribute('aria-pressed', M.key(s) === selected ? 'true' : 'false'); }
+    }
+    $('map-links').replaceChildren();
+    M.contacts(rects()).forEach(c => {
+      const vertical = c.side === 'left' || c.side === 'right', line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      const a = vertical ? [c.fixed, c.from, c.fixed, c.to] : [c.from, c.fixed, c.to, c.fixed];
+      ['x1', 'y1', 'x2', 'y2'].forEach((k, n) => line.setAttribute(k, a[n] * view.scale + (n % 2 ? view.y : view.x))); $('map-links').append(line);
+    });
+    $('zoom-label').textContent = Math.round(view.scale * 100) + ' %';
   }
-  function renderPanel() {
-    const screen = current(), r = route(); if (!screen || !r) return;
-    $('settings-title').textContent = screen.label;
-    $('selected-size').textContent = screen.width + ' × ' + screen.height + (screen.primary ? ' · Pantalla principal' : ' · Pantalla adicional');
-    options($('exit'), [{ value: '', text: 'Desactivada' }, ...edges.map(side => ({ value: side, text: names[side], disabled: !screen.availableEdges.includes(side) }))], r.exit);
-    const targets = [{ value: '', text: 'Escritorio de la otra PC' }, ...state.remote.map(s => ({ value: s.id, text: s.label + ' · ' + s.width + ' × ' + s.height }))];
-    if (r.targetId && !state.remote.some(s => s.id === r.targetId)) targets.push({ value: r.targetId, text: 'Destino guardado · al conectar' });
-    options($('target'), targets, r.targetId);
-    const available = targetOf(r).availableEdges;
-    options($('entry'), edges.map(side => ({ value: side, text: names[side], disabled: !available.includes(side) })), r.entry);
-    $('target').disabled = !r.exit || !state.remote.length;
-    $('entry').disabled = !r.exit;
-    const index = draft.order.indexOf(selected);
-    $('move-before').disabled = index <= 0;
-    $('move-after').disabled = index === draft.order.length - 1;
-    $('automatic').checked = draft.automatic;
-    $('automatic').disabled = saving;
-    $('exit').disabled = saving;
-    $('theme').disabled = saving;
-    $('theme').value = draft.theme;
+  function update() {
+    if (!state) return;
+    const contacts = M.contacts(rects()), overlaps = M.overlaps(rects()), s = selectedRect();
+    $('connection').textContent = state.connected ? 'Conectado' : 'Sin conexión'; $('connection').classList.toggle('connected', state.connected);
+    $('mode').textContent = { local: 'Control local', remote: 'Controlando la otra PC', peer: 'La otra PC tiene el mando' }[state.mode];
+    $('toggle-control').disabled = !state.connected || saving;
+    $('link-count').textContent = contacts.length + (contacts.length === 1 ? ' unión' : ' uniones');
+    $('map-warning').textContent = overlaps ? 'Las pantallas se superponen. Sepáralas antes de guardar.' : contacts.length ? 'La línea verde marca cada paso del ratón.' : 'Sin rutas: acerca los bordes de dos pantallas para unirlas.';
+    $('sync-message').textContent = state.peerMapSupported ? 'Al guardar, el mapa se comparte con la otra PC.' : 'Actualiza TecLink en la otra PC para compartir este mapa. Se puede guardar aquí.';
+    $('settings-title').textContent = s ? `${s.label || 'Pantalla'} · ${s.remote ? 'Otra PC' : 'Esta PC'}` : 'Elige una pantalla';
+    $('selected-size').textContent = s ? `${s.remote ? state.remoteName || 'Otra PC' : state.machineName} · ${s.width} × ${s.height}` : 'Conecta una pantalla.';
+    if (s) { if (document.activeElement !== $('position-x')) $('position-x').value = s.x; if (document.activeElement !== $('position-y')) $('position-y').value = s.y; }
+    $('routes-list').replaceChildren();
+    contacts.filter(c => M.key(c.a) === selected || M.key(c.b) === selected).forEach(c => { const first = M.key(c.a) === selected, target = first ? c.b : c.a, side = first ? c.side : opposite[c.side], li = document.createElement('li'); li.textContent = `${names[side]} ↔ ${names[opposite[side]]} · ${target.remote ? state.remoteName || 'Otra PC' : 'Esta PC'} / ${target.label || 'Pantalla'}`; $('routes-list').append(li); });
+    if (!$('routes-list').children.length) { const li = document.createElement('li'); li.textContent = 'Sin bordes unidos.'; $('routes-list').append(li); }
+    $('save').disabled = saving || overlaps; $('save').textContent = saving ? 'Guardando…' : dirty ? 'Guardar mapa' : 'Mapa guardado';
+    $('save-heading').textContent = dirty ? 'Cambios sin guardar' : 'Mapa actual'; $('save-message').textContent = saving ? 'Esperando confirmación…' : 'Los cambios se aplican al guardar.';
+    ['theme', 'automatic', 'reset-map', 'position-x', 'position-y'].forEach(id => $(id).disabled = saving);
+    document.querySelectorAll('[data-dx]').forEach(b => b.disabled = saving);
+    for (const [id, value] of Object.entries({ 'connection-title': state.connected ? 'Tus equipos están conectados' : 'Esperando conexión', 'detail-name': state.machineName, 'detail-remote': state.remoteName || '—', 'detail-role': state.role === 'Server' ? 'Servidor' : 'Cliente', 'detail-host': state.host, 'detail-port': state.port, 'detail-status': state.status })) $(id).textContent = value;
+    draw();
   }
-  function renderSummary() {
-    const r = route(), screen = current(); if (!r || !screen) return;
-    $('route-title').textContent = r.exit ? screen.label + ' → ' + targetOf(r).label : screen.label + ' sin salida automática';
-    $('route-description').textContent = r.exit ? 'Sale por ' + names[r.exit].toLowerCase() + ' y entra por ' + names[r.entry].toLowerCase() + '.' : 'El atajo seguirá disponible para cambiar de mando.';
-  }
-  function renderAll() {
-    applyTheme(draft.theme); renderMap(); renderPanel(); renderSummary(); renderStatus();
-    $('save').disabled = saving; $('save').classList.toggle('saving', saving);
-  }
-  function chooseEntry() {
-    const r = route(); if (!r?.exit) return;
-    const preferred = opposite[r.exit], available = targetOf(r).availableEdges;
-    r.entry = available.includes(preferred) ? preferred : available[0] || preferred;
-  }
-  $('exit').onchange = () => { route().exit = $('exit').value || null; chooseEntry(); markDirty(); renderMap(); renderPanel(); renderSummary(); };
-  $('target').onchange = () => { route().targetId = $('target').value || null; chooseEntry(); markDirty(); renderMap(); renderPanel(); renderSummary(); };
-  $('entry').onchange = () => { route().entry = $('entry').value; markDirty(); renderMap(); renderSummary(); };
-  $('automatic').onchange = () => { draft.automatic = $('automatic').checked; markDirty(); };
-  $('theme').onchange = () => { draft.theme = $('theme').value; applyTheme(draft.theme); markDirty(); };
-  matchMedia('(prefers-color-scheme:dark)').addEventListener('change', () => { if (draft?.theme === 'system') applyTheme('system'); });
-  for (const [id, delta] of [['move-before', -1], ['move-after', 1]]) $(id).onclick = () => {
-    const index = draft.order.indexOf(selected), target = index + delta;
-    if (target < 0 || target >= draft.order.length) return;
-    [draft.order[index], draft.order[target]] = [draft.order[target], draft.order[index]];
-    markDirty(); renderMap(); renderPanel();
-  };
-  $('save').onclick = () => {
-    if (!draft || saving) return;
-    saving = true; $('save').disabled = true; $('save').classList.add('saving');
-    $('save').innerHTML = 'Guardando… <span aria-hidden="true"></span>';
-    ['exit', 'target', 'entry', 'automatic', 'theme', 'move-before', 'move-after'].forEach(id => $(id).disabled = true);
-    document.querySelectorAll('.screen-card button').forEach(button => button.disabled = true);
-    send({ type: 'save', map: structuredClone(draft) });
-  };
+  function move(dx, dy) { if (saving) return; const p = draft.placements.find(p => M.key(p) === selected); if (!p) return; p.x += dx; p.y += dy; dirty = true; update(); }
+  document.querySelectorAll('[data-dx]').forEach(b => b.onclick = () => move(+b.dataset.dx, +b.dataset.dy));
+  ['x', 'y'].forEach(axis => $('position-' + axis).onchange = e => { const p = draft.placements.find(p => M.key(p) === selected), n = Number(e.target.value); if (p && Number.isInteger(n) && Math.abs(n) <= 1000000) { p[axis] = n; dirty = true; update(); } });
+  $('automatic').onchange = e => { draft.automatic = e.target.checked; dirty = true; update(); };
+  $('theme').onchange = e => { draft.theme = e.target.value; dirty = true; theme(); update(); };
+  $('save').onclick = () => { if (saving || M.overlaps(rects())) return; saving = true; update(); send({ type: 'save', map: structuredClone(draft) }); };
   $('toggle-control').onclick = () => send({ type: 'toggleControl' });
-  document.querySelectorAll('.tab').forEach(tab => tab.onclick = () => {
-    document.querySelectorAll('.tab').forEach(item => { item.classList.toggle('active', item === tab); item.setAttribute('aria-selected', String(item === tab)); });
-    $('screens-tab').hidden = tab.dataset.tab !== 'screens'; $('connection-tab').hidden = tab.dataset.tab !== 'connection';
-  });
-  if (window.chrome?.webview) { window.chrome.webview.addEventListener('message', event => receive(event.data)); send({ type: 'ready' }); }
-  else if (new URLSearchParams(location.search).get('preview') === '1') {
+  $('fit-map').onclick = fit;
+  function zoom(factor) { const board = $('spatial-map'), old = view.scale, next = Math.max(.015, Math.min(.5, old * factor)), cx = board.clientWidth / 2, cy = board.clientHeight / 2; view.x = cx - (cx - view.x) * next / old; view.y = cy - (cy - view.y) * next / old; view.scale = next; draw(); }
+  $('zoom-in').onclick = () => zoom(1.25); $('zoom-out').onclick = () => zoom(.8);
+  $('reset-map').onclick = () => { draft.placements = M.defaults(state); dirty = true; update(); fit(); };
+  document.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { document.querySelectorAll('[data-tab]').forEach(t => { t.classList.toggle('active', t === b); t.setAttribute('aria-selected', t === b ? 'true' : 'false'); }); $('screens-tab').hidden = b.dataset.tab !== 'screens'; $('connection-tab').hidden = b.dataset.tab !== 'connection'; if (b.dataset.tab === 'screens') fit(); });
+  new ResizeObserver(() => fit()).observe($('spatial-map'));
+  window.__tecTest = { receive, draft: () => structuredClone(draft), select: key => { selected = key; update(); } };
+  if (preview) {
     window.__tecMessages = [];
-    receive({ type: 'state', state: { machineName: 'jenav', remoteName: 'rafael', connected: true, mode: 'local', status: 'Conectado con rafael', automatic: true, theme: 'dark', role: 'Client', host: '192.168.12.183', port: 51777,
-      local: [{ id: 'screen1', label: 'Pantalla 1', width: 2240, height: 1400, primary: true, availableEdges: edges, route: { sourceId: 'screen1', exit: 'left', targetId: 'remote1', entry: 'right' } }, { id: 'screen2', label: 'Pantalla 2', width: 3840, height: 2160, primary: false, availableEdges: edges, route: { sourceId: 'screen2', exit: null, targetId: 'remote1', entry: 'right' } }],
-      remote: [{ id: 'remote1', label: 'Pantalla 1', width: 1920, height: 1080, availableEdges: edges }] } });
-  }
-  window.__tecTest = { receive, draft: () => structuredClone(draft) };
+    receive({ type: 'state', state: { machineName: 'JENAV', remoteName: 'RAFAEL', connected: true, mode: 'local', role: 'Client', host: '192.168.12.183', port: 51777, status: 'Conexión por red local', automatic: true, theme: 'dark', peerMapSupported: true, spatialEnabled: true,
+      local: [{ id: 'screen1', label: 'Pantalla 1', primary: true, left: 0, top: 0, width: 2240, height: 1400 }, { id: 'screen2', label: 'Pantalla 2 · HDMI', left: -1600, top: -2160, width: 3840, height: 2160 }], remote: [{ id: 'screen1', label: 'Pantalla 1', left: 0, top: 0, width: 1920, height: 1080 }], placements: [{ id: 'screen1', remote: false, x: 0, y: 0 }, { id: 'screen2', remote: false, x: -1600, y: -2160 }, { id: 'screen1', remote: true, x: -1920, y: 0 }] } });
+  } else { window.chrome?.webview?.addEventListener('message', e => receive(e.data)); send({ type: 'ready' }); }
 })();

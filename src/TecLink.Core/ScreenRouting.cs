@@ -12,7 +12,12 @@ public sealed class ScreenRoute
     public string SourceId { get; set; } = "";
     public ScreenEdge? Exit { get; set; }
     public string? TargetId { get; set; }
+    public bool TargetRemote { get; set; } = true;
     public ScreenEdge Entry { get; set; } = ScreenEdge.Right;
+    public double Start { get; set; }
+    public double End { get; set; } = 1;
+    public double TargetStart { get; set; }
+    public double TargetEnd { get; set; } = 1;
 }
 
 public static class ScreenRouting

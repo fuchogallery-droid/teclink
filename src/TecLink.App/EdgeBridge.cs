@@ -40,6 +40,10 @@ public sealed class EdgeBridge : IDisposable
     private string _remoteName = "Otra PC";
     private DisplayInfo[] _remoteDisplays = Array.Empty<DisplayInfo>();
     private (DisplayInfo Source, ScreenEdge Exit, DisplayInfo Target, ScreenEdge Entry)? _activeRoute;
+    private List<ScreenRoute> _spatialLocal = new(), _spatialRemote = new();
+    private bool _spatialValid, _peerMapSupported;
+    private Point? _lastLocalPoint;
+    private readonly Dictionary<string, TaskCompletionSource<WireMessage>> _mapRequests = new();
 
     // Tracks keys/buttons we've injected on THIS machine because the peer is controlling
     // us, so a dropped connection (or the peer handing control back) mid-keypress doesn't
@@ -155,6 +159,11 @@ public sealed class EdgeBridge : IDisposable
                 _remoteName = msg.MachineName ?? "Otra PC";
                 _remoteDisplays = msg.Displays.Length > 0 ? msg.Displays
                     : new[] { new DisplayInfo("desktop", 0, 0, _remoteWidth, _remoteHeight) };
+                _peerMapSupported = msg.SupportsSpatialMap;
+                RefreshSpatialRoutes();
+                if (_peerMapSupported && _config.UseSpatialMap && _spatialValid &&
+                    (_config.Role == PeerRole.Server || !msg.HasSpatialMap))
+                    _ = _connection!.SendAsync(WireMessage.Map(Guid.NewGuid().ToString("N"), _config.ScreenPositions.ToArray()));
                 StatusChanged?.Invoke($"Vinculado con {msg.MachineName} ({_remoteWidth}x{_remoteHeight})");
                 break;
             case MessageType.MouseMove:
@@ -177,6 +186,7 @@ public sealed class EdgeBridge : IDisposable
                 _clipboard.ApplyRemoteText(msg.Text ?? "");
                 break;
             case MessageType.SwitchToRemote:
+                _lastLocalPoint = null;
                 // The peer just started controlling us. If we were ALSO currently
                 // controlling them (both pressed the hotkey near-simultaneously), we
                 // yield — whoever's "take control" message arrives wins, the other side
@@ -187,10 +197,26 @@ public sealed class EdgeBridge : IDisposable
                 ControlChanged?.Invoke("La otra PC tiene el mando");
                 break;
             case MessageType.SwitchToLocal:
+                _lastLocalPoint = null;
                 _peerControlling = false;
                 ReleaseAllInjectedInput(); // defensive: peer says it's done, make sure nothing stayed held here
                 StatusChanged?.Invoke("La otra PC soltó el mando");
                 ControlChanged?.Invoke("Tienes el mando local");
+                break;
+            case MessageType.SpatialMap:
+                if (!_peerMapSupported) break;
+                try
+                {
+                    StoreSpatialMap(msg.Placements.Select(p => p with { Remote = !p.Remote }).ToList(),
+                        _config.AutomaticSwitching, _config.Theme);
+                    _ = _connection?.SendAsync(WireMessage.MapAck(msg.RequestId ?? "", true));
+                    StatusChanged?.Invoke("Mapa recibido de la otra PC y guardado.");
+                }
+                catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException)
+                { _ = _connection?.SendAsync(WireMessage.MapAck(msg.RequestId ?? "", false, ex.Message)); }
+                break;
+            case MessageType.SpatialMapAck:
+                if (_mapRequests.TryGetValue(msg.RequestId ?? "", out var request)) request.TrySetResult(msg);
                 break;
         }
     }
@@ -205,6 +231,12 @@ public sealed class EdgeBridge : IDisposable
     {
         if (_mode == BridgeMode.Local)
         {
+            if (_config.UseSpatialMap && _spatialValid && _connection is not null && _remoteKnown && !_peerControlling)
+            {
+                HandleSpatialLocalMove(e);
+                return;
+            }
+            if (_config.UseSpatialMap) return; // An unavailable map must not reactivate legacy exits.
             if (_connection is null || !_remoteKnown || _peerControlling || !_config.AutomaticSwitching) return;
             var desktop = _desktop;
             var point = new Point(e.X, e.Y);
@@ -228,6 +260,27 @@ public sealed class EdgeBridge : IDisposable
         {
             var previous = pointer.Position;
             var target = pointer.Advance(dx, dy);
+            if (_config.UseSpatialMap && _spatialValid)
+            {
+                var source = _remoteDisplays.FirstOrDefault(d => d.Bounds.Contains(previous));
+                if (source is not null)
+                {
+                    var transition = SpatialNavigation.Find(source, previous, target, _spatialRemote, _remoteDisplays, LocalDisplays());
+                    if (transition is not null && (!transition.Route.TargetRemote || _config.AutomaticSwitching))
+                    {
+                        if (transition.Route.TargetRemote)
+                        {
+                            _lastLocalPoint = transition.Position;
+                            SwitchToLocal(transition.Position.X, transition.Position.Y);
+                            return;
+                        }
+                        pointer.SetPosition(transition.Position);
+                    }
+                    else pointer.SetPosition(ClampTo(source.Bounds, target));
+                }
+                _ = connection.SendAsync(WireMessage.MouseMove(pointer.Position.X, pointer.Position.Y));
+                return;
+            }
 
             if (_activeRoute is { } route && ScreenRouting.Crossed(previous, target, route.Target.Bounds, route.Entry))
             {
@@ -344,7 +397,10 @@ public sealed class EdgeBridge : IDisposable
         _keyboardHook.Swallow = false;
 
         if (resumeX is int rx && resumeY is int ry)
+        {
+            _lastLocalPoint = new Point(rx, ry);
             InputInjector.MoveTo(rx, ry);
+        }
 
         if (wasRemote)
             ReleaseAllRemoteHeldInput();
@@ -389,7 +445,7 @@ public sealed class EdgeBridge : IDisposable
     {
         var bounds = _desktop.Bounds;
         var displays = LocalDisplays().Select(d => d with { Left = d.Left - bounds.Left, Top = d.Top - bounds.Top }).ToArray();
-        return connection.SendAsync(WireMessage.Hello(_config.MachineName, bounds.Width, bounds.Height, displays));
+        return connection.SendAsync(WireMessage.Hello(_config.MachineName, bounds.Width, bounds.Height, displays, true, _config.UseSpatialMap));
     }
 
     private static DisplayInfo[] LocalDisplays() => Screen.AllScreens.Select(s =>
@@ -410,16 +466,19 @@ public sealed class EdgeBridge : IDisposable
             connected = _connection is not null && _remoteKnown,
             mode = _mode == BridgeMode.Remote ? "remote" : _peerControlling ? "peer" : "local", status,
             automatic = _config.AutomaticSwitching, theme = _config.Theme,
+            placements = _config.ScreenPositions, spatialEnabled = _config.UseSpatialMap, peerMapSupported = _peerMapSupported,
             host = _config.PeerHost, port = _config.Port, role = _config.Role.ToString(),
             local = local.OrderBy(d => order.Contains(d.Id) ? order.IndexOf(d.Id) : 1000 + Array.IndexOf(local, d)).Select(d => new
             {
                 id = d.Id, label = "Pantalla " + (Array.IndexOf(local, d) + 1), width = d.Width, height = d.Height,
+                left = d.Left, top = d.Top,
                 primary = Screen.PrimaryScreen!.DeviceName == d.Id, route = RouteFor(d.Id),
                 availableEdges = Enum.GetValues<ScreenEdge>().Where(side => ScreenRouting.EntryPoint(d, side, .5, local) is not null),
             }),
             remote = _remoteDisplays.Select((d, n) => new
             {
                 id = d.Id, label = d.Id == "desktop" ? "Escritorio remoto" : "Pantalla " + (n + 1), width = d.Width, height = d.Height,
+                left = d.Left, top = d.Top,
                 availableEdges = Enum.GetValues<ScreenEdge>().Where(side => ScreenRouting.EntryPoint(d, side, .5, _remoteDisplays) is not null),
             }),
         };
@@ -474,6 +533,7 @@ public sealed class EdgeBridge : IDisposable
         {
             SwitchToLocal(force: true);
             _desktop = CaptureDesktop();
+            RefreshSpatialRoutes();
             if (_connection is { } connection) _ = SendDesktopAsync(connection);
         });
     }
@@ -484,5 +544,76 @@ public sealed class EdgeBridge : IDisposable
         _mouseHook.Dispose();
         _rawMouse.Dispose();
         _keyboardHook.Dispose();
+    }
+
+    private static Point ClampTo(Rectangle screen, Point point) => new(Math.Clamp(point.X, screen.Left, screen.Right - 1), Math.Clamp(point.Y, screen.Top, screen.Bottom - 1));
+
+    private void HandleSpatialLocalMove(HookMouseEventArgs e)
+    {
+        var candidate = new Point(e.X, e.Y);
+        Win32.GetCursorPos(out var cursor);
+        var previous = _lastLocalPoint ?? new Point(cursor.x, cursor.y);
+        var local = LocalDisplays();
+        var source = local.FirstOrDefault(d => d.Bounds.Contains(previous)) ?? local.FirstOrDefault(d => d.Bounds.Contains(candidate));
+        if (source is null) { _lastLocalPoint = candidate; return; }
+        var transition = SpatialNavigation.Find(source, previous, candidate, _spatialLocal, local, _remoteDisplays);
+        if (transition is not null && (!transition.Route.TargetRemote || _config.AutomaticSwitching))
+        {
+            e.Suppress = true;
+            if (transition.Route.TargetRemote)
+                EngageRemote(previous.X, previous.Y, transition.Position.X, transition.Position.Y);
+            else
+            {
+                _lastLocalPoint = transition.Position;
+                InputInjector.MoveTo(transition.Position.X, transition.Position.Y);
+            }
+            return;
+        }
+        _lastLocalPoint = ClampTo(source.Bounds, candidate);
+        if (!source.Bounds.Contains(candidate)) { e.Suppress = true; InputInjector.MoveTo(_lastLocalPoint.Value.X, _lastLocalPoint.Value.Y); }
+    }
+
+    private void RefreshSpatialRoutes()
+    {
+        _spatialValid = false;
+        if (!_config.UseSpatialMap) return;
+        try
+        {
+            _spatialLocal = SpatialMap.Build(LocalDisplays(), _remoteDisplays, _config.ScreenPositions);
+            _spatialRemote = SpatialMap.Build(_remoteDisplays, LocalDisplays(), _config.ScreenPositions.Select(p => p with { Remote = !p.Remote }).ToArray());
+            _spatialValid = true;
+        }
+        catch (ArgumentException) { /* Changed monitors: keep native local movement until the map is revised. */ }
+    }
+
+    private void StoreSpatialMap(List<ScreenPlacement> positions, bool automatic, string theme)
+    {
+        _ = SpatialMap.Build(LocalDisplays(), _remoteDisplays, positions);
+        var previous = (_config.ScreenPositions, _config.UseSpatialMap, _config.AutomaticSwitching, _config.Theme);
+        _config.ScreenPositions = positions; _config.UseSpatialMap = true; _config.AutomaticSwitching = automatic;
+        _config.Theme = theme is "dark" or "light" ? theme : "system";
+        try { _config.Save(); }
+        catch { (_config.ScreenPositions, _config.UseSpatialMap, _config.AutomaticSwitching, _config.Theme) = previous; throw; }
+        if (_peerControlling && _connection is { } peer) { _peerControlling = false; _ = peer.SendAsync(WireMessage.SwitchToRemote()); }
+        SwitchToLocal(force: true); ReleaseAllInjectedInput(); _lastLocalPoint = null;
+        RefreshSpatialRoutes();
+    }
+
+    public async Task<string> ApplySpatialMapAsync(List<ScreenPlacement> positions, bool automatic, string theme)
+    {
+        StoreSpatialMap(positions, automatic, theme);
+        if (!_peerMapSupported || _connection is null || !_remoteKnown)
+            return "Mapa guardado en esta PC. Actualiza la otra PC para sincronizarlo.";
+        var id = Guid.NewGuid().ToString("N");
+        var completion = new TaskCompletionSource<WireMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _mapRequests[id] = completion;
+        try
+        {
+            await _connection.SendAsync(WireMessage.Map(id, positions.ToArray()));
+            var answer = await completion.Task.WaitAsync(TimeSpan.FromSeconds(4));
+            return answer.Accepted ? "Mapa guardado en ambas PCs." : "Guardado aquí. La otra PC no pudo aplicarlo: " + answer.Text;
+        }
+        catch (TimeoutException) { return "Mapa guardado aquí. La otra PC no confirmó a tiempo."; }
+        finally { _mapRequests.Remove(id); }
     }
 }

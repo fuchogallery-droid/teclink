@@ -22,6 +22,8 @@ public sealed class AppConfig
     public List<ScreenRoute> ScreenRoutes { get; set; } = new();
     public List<string> ScreenOrder { get; set; } = new();
     public string Theme { get; set; } = "system";
+    public bool UseSpatialMap { get; set; }
+    public List<ScreenPlacement> ScreenPositions { get; set; } = new();
 
     private static string ConfigPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TecLink", "config.json");
