@@ -1,5 +1,7 @@
 using TecLink.App.Native;
 using TecLink.Core.Protocol;
+using TecLink.Core;
+using System.Runtime.InteropServices;
 
 namespace TecLink.App.Input;
 
@@ -9,7 +11,23 @@ namespace TecLink.App.Input;
 /// </summary>
 public static class InputInjector
 {
-    public static void MoveTo(int x, int y) => Win32.SetCursorPos(x, y);
+    private static long _lastFailureLog;
+
+    public static bool MoveTo(int x, int y)
+    {
+        var desktop = SystemInformation.VirtualScreen;
+        return Send(new Win32.INPUT
+        {
+            type = Win32.INPUT_MOUSE,
+            u = new Win32.INPUT_UNION { mi = new Win32.MOUSEINPUT
+            {
+                dx = (int)((long)Math.Clamp(x - desktop.Left, 0, desktop.Width - 1) * 65535 / Math.Max(1, desktop.Width - 1)),
+                dy = (int)((long)Math.Clamp(y - desktop.Top, 0, desktop.Height - 1) * 65535 / Math.Max(1, desktop.Height - 1)),
+                dwFlags = Win32.MOUSEEVENTF_MOVE | Win32.MOUSEEVENTF_ABSOLUTE | Win32.MOUSEEVENTF_VIRTUALDESK,
+                dwExtraInfo = Win32.InputMarker,
+            } },
+        });
+    }
 
     public static void Button(MouseButtonKind button, bool isDown)
     {
@@ -24,9 +42,9 @@ public static class InputInjector
         var input = new Win32.INPUT
         {
             type = Win32.INPUT_MOUSE,
-            u = new Win32.INPUT_UNION { mi = new Win32.MOUSEINPUT { dwFlags = flags } },
+            u = new Win32.INPUT_UNION { mi = new Win32.MOUSEINPUT { dwFlags = flags, dwExtraInfo = Win32.InputMarker } },
         };
-        Win32.SendInput(1, new[] { input }, System.Runtime.InteropServices.Marshal.SizeOf<Win32.INPUT>());
+        Send(input);
     }
 
     public static void Wheel(int delta)
@@ -34,19 +52,31 @@ public static class InputInjector
         var input = new Win32.INPUT
         {
             type = Win32.INPUT_MOUSE,
-            u = new Win32.INPUT_UNION { mi = new Win32.MOUSEINPUT { dwFlags = Win32.MOUSEEVENTF_WHEEL, mouseData = unchecked((uint)delta) } },
+            u = new Win32.INPUT_UNION { mi = new Win32.MOUSEINPUT { dwFlags = Win32.MOUSEEVENTF_WHEEL, mouseData = unchecked((uint)delta), dwExtraInfo = Win32.InputMarker } },
         };
-        Win32.SendInput(1, new[] { input }, System.Runtime.InteropServices.Marshal.SizeOf<Win32.INPUT>());
+        Send(input);
     }
 
-    public static void Key(int vkCode, bool isDown, bool isExtended)
+    public static bool Key(int vkCode, bool isDown, bool isExtended, int scanCode = 0)
     {
-        var flags = (isDown ? 0u : Win32.KEYEVENTF_KEYUP) | (isExtended ? Win32.KEYEVENTF_EXTENDEDKEY : 0u);
+        var key = KeyboardStroke.Create(vkCode, scanCode, isDown, isExtended);
         var input = new Win32.INPUT
         {
             type = Win32.INPUT_KEYBOARD,
-            u = new Win32.INPUT_UNION { ki = new Win32.KEYBDINPUT { wVk = (ushort)vkCode, dwFlags = flags } },
+            u = new Win32.INPUT_UNION { ki = new Win32.KEYBDINPUT
+            { wVk = key.VirtualKey, wScan = key.ScanCode, dwFlags = key.Flags, dwExtraInfo = Win32.InputMarker } },
         };
-        Win32.SendInput(1, new[] { input }, System.Runtime.InteropServices.Marshal.SizeOf<Win32.INPUT>());
+        return Send(input);
+    }
+
+    private static bool Send(Win32.INPUT input)
+    {
+        if (Win32.SendInput(1, new[] { input }, Marshal.SizeOf<Win32.INPUT>()) == 1) return true;
+        var error = Marshal.GetLastWin32Error();
+        var now = Environment.TickCount64;
+        var previous = Interlocked.Read(ref _lastFailureLog);
+        if (now - previous > 2000 && Interlocked.CompareExchange(ref _lastFailureLog, now, previous) == previous)
+            Logger.LogError(new InvalidOperationException($"Windows rechazó entrada remota (SendInput, error {error}). Comprobar permisos y estado de la aplicación destino; UIPI puede bloquear sin código de error."));
+        return false;
     }
 }

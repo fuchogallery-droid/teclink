@@ -7,5 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/TecLink.Core/TecLink.Core.csproj" />
+    <Compile Include="../../src/TecLink.App/Native/Win32.cs" Link="Native/Win32.cs" />
   </ItemGroup>
 </Project>

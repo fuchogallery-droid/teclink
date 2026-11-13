@@ -50,6 +50,8 @@ public sealed class KeyboardHook : IDisposable
         if (nCode >= 0)
         {
             var data = System.Runtime.InteropServices.Marshal.PtrToStructure<Win32.KBDLLHOOKSTRUCT>(lParam);
+            if (data.dwExtraInfo == Win32.InputMarker)
+                return Win32.CallNextHookEx(_hookHandle, nCode, wParam, lParam);
             var msg = (int)wParam;
             var isDown = msg is Win32.WM_KEYDOWN or Win32.WM_SYSKEYDOWN;
             var isUp = msg is Win32.WM_KEYUP or Win32.WM_SYSKEYUP;
