@@ -49,6 +49,8 @@ public sealed class MouseHook : IDisposable
         if (nCode >= 0)
         {
             var data = System.Runtime.InteropServices.Marshal.PtrToStructure<Win32.MSLLHOOKSTRUCT>(lParam);
+            if (data.dwExtraInfo == Win32.InputMarker)
+                return Win32.CallNextHookEx(_hookHandle, nCode, wParam, lParam);
             var msg = (int)wParam;
 
             switch (msg)

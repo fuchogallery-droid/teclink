@@ -1,6 +1,12 @@
 using System.Drawing;
 using TecLink.Core;
 using TecLink.Core.Protocol;
+using TecLink.Core.Networking;
+using TecLink.App.Native;
+using System.Runtime.InteropServices;
+using System.Net;
+using System.Net.Sockets;
+using System.Buffers.Binary;
 
 var checks = 0;
 void Check(bool condition, string description)
@@ -46,4 +52,75 @@ var hello = WireMessage.Decode(WireMessage.Hello("jenav", desktop.Bounds.Width, 
 Check(hello.ScreenWidth == 4400 && hello.ScreenHeight == 3560, "Existing Hello protocol carries virtual dimensions");
 var mouse = WireMessage.Decode(WireMessage.MouseMove(2159, 1159).Encode());
 Check(mouse.X == 2159 && mouse.Y == 1159, "Mouse protocol remains byte-compatible");
-Console.WriteLine($"PASS: {checks} geometry and protocol regression checks");
+var pointer = new RemotePointer(new Size(1920, 1080), new Point(500, 500));
+for (var n = 0; n < 200; n++) pointer.Advance(1, 0);
+Check(pointer.Position == new Point(700, 500), "Hardware deltas accumulate instead of snapping back to entry");
+for (var n = 0; n < 100; n++) pointer.Advance(-1, 1);
+Check(pointer.Position == new Point(600, 600), "Diagonal direction changes preserve accumulated motion");
+Check(pointer.Advance(0, 0) == new Point(600, 600), "Idle packet cannot reset pointer");
+pointer.Advance(0, -10000);
+Check(pointer.Advance(0, 1).Y == 1, "No invisible vertical overshoot accumulates at desktop boundary");
+var boundaryPointer = new RemotePointer(new Size(100, 100), Point.Empty);
+Check(boundaryPointer.Advance(-2, 0).X == -2, "Raw crossing keeps horizontal excess for handoff");
+Check(boundaryPointer.Advance(1, 0).X == 1, "Stored pointer remains bounded after overshoot");
+
+var physicalKey = KeyboardStroke.Create(0x41, 0x1E, true, false);
+Check(physicalKey == new KeyboardStroke(0, 0x1E, 0x8), "Physical key uses scan code, not a conflicting virtual key");
+Check(KeyboardStroke.Create(0x41, 0x1E, false, false).Flags == 0xA, "Key release preserves scan-code flag");
+Check(KeyboardStroke.Create(0xA3, 0x1D, false, true).Flags == 0xB, "Extended key release preserves all flags");
+Check(KeyboardStroke.Create(0xAF, 0, true, false) == new KeyboardStroke(0xAF, 0, 0), "Keys without scan code retain VK fallback");
+var released = WireMessage.Decode(WireMessage.KeyEventMsg(0x41, 0x1E, false, false).Encode());
+Check(released.ScanCode == 0x1E && !released.IsDown, "Disconnect release can carry original scan code");
+Check(Marshal.SizeOf<Win32.INPUT>() == (IntPtr.Size == 8 ? 40 : 28), "Native INPUT layout has correct size");
+Check(Marshal.SizeOf<Win32.RAWINPUTHEADER>() == (IntPtr.Size == 8 ? 24 : 16), "Raw Input header layout");
+Check(Marshal.SizeOf<Win32.RAWMOUSE>() == 24, "Raw mouse layout size");
+Check(Marshal.OffsetOf<Win32.RAWMOUSE>(nameof(Win32.RAWMOUSE.LastX)).ToInt32() == 12, "Raw mouse X offset matches Windows ABI");
+Check(Marshal.OffsetOf<Win32.RAWMOUSE>(nameof(Win32.RAWMOUSE.LastY)).ToInt32() == 16, "Raw mouse Y offset matches Windows ABI");
+
+// Real TCP framing and a burst much faster than the display refresh rate.
+// Verify latest motion survives while click/key/handoff ordering remains exact.
+using var listener = new TcpListener(IPAddress.Loopback, 0);
+listener.Start();
+using var client = new TcpClient();
+await client.ConnectAsync(IPAddress.Loopback, ((IPEndPoint)listener.LocalEndpoint).Port);
+using var receiving = await listener.AcceptTcpClientAsync();
+await using var connection = new PeerConnection(client);
+using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+async Task<List<WireMessage>> ReadFrames()
+{
+    var received = new List<WireMessage>();
+    var stream = receiving.GetStream();
+    var header = new byte[4];
+    while (true)
+    {
+        await stream.ReadExactlyAsync(header, timeout.Token);
+        var frame = new byte[BinaryPrimitives.ReadInt32LittleEndian(header)];
+        await stream.ReadExactlyAsync(frame, timeout.Token);
+        var message = WireMessage.Decode(frame);
+        received.Add(message);
+        if (message.Type == MessageType.SwitchToLocal) return received;
+    }
+}
+var readFrames = ReadFrames();
+var sends = new List<Task>();
+for (var n = 0; n < 1000; n++) sends.Add(connection.SendAsync(WireMessage.MouseMove(n, 100)));
+sends.Add(connection.SendAsync(WireMessage.KeyEventMsg(0x41, 0x1E, true, false)));
+sends.Add(connection.SendAsync(WireMessage.MouseButtonEvent(MouseButtonKind.Left, true)));
+for (var n = 1000; n < 2000; n++) sends.Add(connection.SendAsync(WireMessage.MouseMove(n, 200)));
+sends.Add(connection.SendAsync(WireMessage.MouseButtonEvent(MouseButtonKind.Left, false)));
+sends.Add(connection.SendAsync(WireMessage.KeyEventMsg(0x41, 0x1E, false, false)));
+sends.Add(connection.SendAsync(WireMessage.SwitchToLocal()));
+await Task.WhenAll(sends).WaitAsync(timeout.Token);
+var frames = await readFrames;
+var downIndex = frames.FindIndex(m => m.Type == MessageType.KeyEvent && m.IsDown);
+var upIndex = frames.FindIndex(m => m.Type == MessageType.KeyEvent && !m.IsDown);
+Check(downIndex > 0 && frames[downIndex - 1].X == 999, "Latest pre-key movement delivered before key down");
+Check(upIndex > downIndex && frames[upIndex - 2].Type == MessageType.MouseMove && frames[upIndex - 2].X == 1999,
+    "Latest drag movement delivered before button/key releases");
+Check(frames.Count(m => m.Type == MessageType.KeyEvent) == 2, "Keyboard events never coalesced or lost");
+Check(frames.Count(m => m.Type == MessageType.MouseButton) == 2, "Mouse button transitions never coalesced or lost");
+Check(frames[^1].Type == MessageType.SwitchToLocal, "No old movement appears after handoff");
+var movementFrames = frames.Count(m => m.Type == MessageType.MouseMove);
+Check(movementFrames < 1000, "High-rate movement is coalesced rather than backlogged");
+Console.WriteLine($"TCP burst: 2000 movement proposals -> {movementFrames} movement frames; all keys/buttons ordered");
+Console.WriteLine($"PASS: {checks} geometry, input and TCP regression checks");

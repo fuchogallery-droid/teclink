@@ -1,4 +1,6 @@
 using System.Net.Sockets;
+using System.Diagnostics;
+using System.Buffers.Binary;
 using TecLink.Core.Protocol;
 
 namespace TecLink.Core.Networking;
@@ -12,8 +14,17 @@ public sealed class PeerConnection : IAsyncDisposable
 {
     private readonly TcpClient _client;
     private readonly NetworkStream _stream;
-    private readonly SemaphoreSlim _sendLock = new(1, 1);
+    private readonly object _queueLock = new();
+    private readonly LinkedList<Outbound> _outbound = new();
+    private readonly SemaphoreSlim _sendSignal = new(0, 1);
     private readonly CancellationTokenSource _cts = new();
+    private readonly Task _sendTask;
+    private Task? _receiveTask;
+    private bool _wakePending;
+    private bool _closed;
+    private int _disconnected;
+    private long _nextMouseSend;
+    private sealed record Outbound(byte[] Frame, bool Mouse, TaskCompletionSource Completion);
 
     public event Action<WireMessage>? MessageReceived;
     public event Action? Disconnected;
@@ -23,33 +34,95 @@ public sealed class PeerConnection : IAsyncDisposable
         _client = client;
         _client.NoDelay = true; // low latency matters more than throughput here
         _stream = client.GetStream();
+        _sendTask = SendLoopAsync();
     }
 
-    public void StartReceiving() => _ = ReceiveLoopAsync(_cts.Token);
+    public void StartReceiving() => _receiveTask ??= ReceiveLoopAsync(_cts.Token);
 
-    public async Task SendAsync(WireMessage message)
+    public Task SendAsync(WireMessage message)
     {
         var payload = message.Encode();
-        var header = BitConverter.GetBytes(payload.Length);
+        var frame = new byte[sizeof(int) + payload.Length];
+        BinaryPrimitives.WriteInt32LittleEndian(frame, payload.Length);
+        payload.CopyTo(frame, sizeof(int));
+        var work = new Outbound(frame, message.Type == MessageType.MouseMove,
+            new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+        lock (_queueLock)
+        {
+            if (_closed) return Task.CompletedTask;
+            // Only adjacent moves may replace each other. Keys, clicks and handoffs
+            // form ordering barriers and are never discarded or overtaken.
+            if (work.Mouse && _outbound.Last?.Value is { Mouse: true } previous)
+            {
+                _outbound.RemoveLast();
+                previous.Completion.TrySetResult(); // superseded, not an unsent key
+            }
+            _outbound.AddLast(work);
+            if (!_wakePending)
+            {
+                _wakePending = true;
+                _sendSignal.Release();
+            }
+        }
+        return work.Completion.Task;
+    }
 
-        await _sendLock.WaitAsync();
+    private async Task SendLoopAsync()
+    {
+        Outbound? current = null;
         try
         {
-            await _stream.WriteAsync(header);
-            await _stream.WriteAsync(payload);
+            while (true)
+            {
+                await _sendSignal.WaitAsync(_cts.Token);
+                lock (_queueLock) _wakePending = false;
+                while (true)
+                {
+                    bool mouse;
+                    lock (_queueLock)
+                    {
+                        if (_outbound.First is null) break;
+                        mouse = _outbound.First.Value.Mouse;
+                    }
+                    // At most 120 mouse updates/s, retaining the latest position
+                    // instead of accumulating seconds of stale motion on Wi-Fi.
+                    var remaining = _nextMouseSend - Stopwatch.GetTimestamp();
+                    if (mouse && remaining > 0)
+                        await Task.Delay(TimeSpan.FromSeconds((double)remaining / Stopwatch.Frequency), _cts.Token);
+                    lock (_queueLock)
+                    {
+                        if (_outbound.First is null) break;
+                        current = _outbound.First.Value;
+                        _outbound.RemoveFirst();
+                    }
+                    if (current.Mouse) _nextMouseSend = Stopwatch.GetTimestamp() + Stopwatch.Frequency / 120;
+                    // One write per frame avoids separate tiny TCP packets for
+                    // the length header and its payload. NoDelay remains enabled.
+                    await _stream.WriteAsync(current.Frame, _cts.Token);
+                    current.Completion.TrySetResult();
+                    current = null;
+                }
+            }
         }
-        catch (IOException)
-        {
-            Disconnected?.Invoke();
-        }
-        catch (SocketException)
-        {
-            Disconnected?.Invoke();
-        }
+        catch (OperationCanceledException) when (_cts.IsCancellationRequested) { }
+        catch (ObjectDisposedException) when (_cts.IsCancellationRequested) { }
+        catch (IOException) { SignalDisconnected(); }
+        catch (SocketException) { SignalDisconnected(); }
         finally
         {
-            _sendLock.Release();
+            current?.Completion.TrySetResult();
+            lock (_queueLock)
+            {
+                _closed = true;
+                foreach (var pending in _outbound) pending.Completion.TrySetResult();
+                _outbound.Clear();
+            }
         }
+    }
+
+    private void SignalDisconnected()
+    {
+        if (Interlocked.Exchange(ref _disconnected, 1) == 0) Disconnected?.Invoke();
     }
 
     private async Task ReceiveLoopAsync(CancellationToken ct)
@@ -80,7 +153,7 @@ public sealed class PeerConnection : IAsyncDisposable
         {
         }
 
-        Disconnected?.Invoke();
+        SignalDisconnected();
     }
 
     private async Task<bool> ReadExactAsync(byte[] buffer, int count, CancellationToken ct)
@@ -100,7 +173,9 @@ public sealed class PeerConnection : IAsyncDisposable
         _cts.Cancel();
         _stream.Dispose();
         _client.Dispose();
-        _sendLock.Dispose();
-        await Task.CompletedTask;
+        await _sendTask;
+        if (_receiveTask is { } receive) await receive;
+        _sendSignal.Dispose();
+        _cts.Dispose();
     }
 }

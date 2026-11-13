@@ -24,9 +24,9 @@ public sealed class ClipboardWatcher : Form
         Height = 0;
     }
 
-    protected override void OnLoad(EventArgs e)
+    protected override void OnHandleCreated(EventArgs e)
     {
-        base.OnLoad(e);
+        base.OnHandleCreated(e);
         Win32.AddClipboardFormatListener(Handle);
     }
 
@@ -71,7 +71,7 @@ public sealed class ClipboardWatcher : Form
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing)
+        if (disposing && IsHandleCreated)
             Win32.RemoveClipboardFormatListener(Handle);
         base.Dispose(disposing);
     }

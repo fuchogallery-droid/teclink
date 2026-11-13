@@ -23,6 +23,7 @@ public sealed class EdgeBridge : IDisposable
     private readonly AppConfig _config;
     private readonly MouseHook _mouseHook = new();
     private readonly KeyboardHook _keyboardHook = new();
+    private readonly RawMouseInput _rawMouse = new();
     private readonly ClipboardWatcher _clipboard;
     private volatile DesktopLayout _desktop;
 
@@ -35,17 +36,18 @@ public sealed class EdgeBridge : IDisposable
     private BridgeMode _mode = BridgeMode.Local;
     private int _anchorX, _anchorY;
     private int _entryX, _entryY;
+    private RemotePointer? _remotePointer;
 
     // Tracks keys/buttons we've injected on THIS machine because the peer is controlling
     // us, so a dropped connection (or the peer handing control back) mid-keypress doesn't
     // leave them stuck down.
-    private readonly Dictionary<int, bool> _heldKeys = new();
+    private readonly Dictionary<int, (int ScanCode, bool Extended)> _heldKeys = new();
     private readonly HashSet<MouseButtonKind> _heldButtons = new();
 
     // The mirror image: keys/buttons WE'VE forwarded to the peer while controlling them,
     // so handing control back (voluntarily or because the peer took it) releases them on
     // the peer's end instead of leaving them stuck there.
-    private readonly Dictionary<int, bool> _sentHeldKeys = new();
+    private readonly Dictionary<int, (int ScanCode, bool Extended)> _sentHeldKeys = new();
     private readonly HashSet<MouseButtonKind> _sentHeldButtons = new();
 
     public event Action<string>? StatusChanged;
@@ -63,6 +65,7 @@ public sealed class EdgeBridge : IDisposable
         SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
 
         _mouseHook.Move += OnMouseMove;
+        _rawMouse.Move += OnRawMouseMove;
         _mouseHook.ButtonChanged += OnMouseButton;
         _mouseHook.Wheel += OnMouseWheel;
         _keyboardHook.KeyEvent += OnKeyEvent;
@@ -72,6 +75,7 @@ public sealed class EdgeBridge : IDisposable
 
     public void InstallHooks()
     {
+        _rawMouse.Install();
         _mouseHook.Install();
         _keyboardHook.Install();
     }
@@ -118,8 +122,11 @@ public sealed class EdgeBridge : IDisposable
             StatusChanged?.Invoke("Conexión perdida. Reintentando...");
             _connection = null;
             _peerControlling = false;
-            SwitchToLocal(force: true);
-            ReleaseAllInjectedInput();
+            _clipboard.BeginInvoke(() =>
+            {
+                SwitchToLocal(force: true);
+                ReleaseAllInjectedInput();
+            });
             await connection.DisposeAsync();
 
             if (ct.IsCancellationRequested) return;
@@ -129,6 +136,12 @@ public sealed class EdgeBridge : IDisposable
 
     private void OnMessageReceived(WireMessage msg)
     {
+        if (_clipboard.IsDisposed) return;
+        if (_clipboard.InvokeRequired)
+        {
+            _clipboard.BeginInvoke(() => OnMessageReceived(msg));
+            return;
+        }
         switch (msg.Type)
         {
             case MessageType.Hello:
@@ -150,8 +163,9 @@ public sealed class EdgeBridge : IDisposable
                 InputInjector.Wheel(msg.WheelDelta);
                 break;
             case MessageType.KeyEvent:
-                if (msg.IsDown) _heldKeys[msg.VkCode] = msg.IsExtendedKey; else _heldKeys.Remove(msg.VkCode);
-                InputInjector.Key(msg.VkCode, msg.IsDown, msg.IsExtendedKey);
+                if (msg.IsDown) _heldKeys[msg.VkCode] = (msg.ScanCode, msg.IsExtendedKey); else _heldKeys.Remove(msg.VkCode);
+                if (!InputInjector.Key(msg.VkCode, msg.IsDown, msg.IsExtendedKey, msg.ScanCode))
+                    StatusChanged?.Invoke("Windows rechazó entrada de teclado; revisa error.log");
                 break;
             case MessageType.ClipboardText:
                 _clipboard.ApplyRemoteText(msg.Text ?? "");
@@ -194,12 +208,15 @@ public sealed class EdgeBridge : IDisposable
             var entryY = (int)((long)localY * (_remoteHeight - 1) / Math.Max(1, desktop.Bounds.Height - 1));
             EngageRemote(e.X, e.Y, entryX, entryY);
         }
-        else
+    }
+
+    private void OnRawMouseMove(int dx, int dy)
+    {
+        if (_mode == BridgeMode.Remote && _connection is { } connection && _remotePointer is { } pointer)
         {
-            var dx = e.X - _anchorX;
-            var dy = e.Y - _anchorY;
-            var targetX = _entryX + dx;
-            var targetY = Math.Clamp(_entryY + dy, 0, _remoteHeight - 1);
+            var target = pointer.Advance(dx, dy);
+            var targetX = target.X;
+            var targetY = target.Y;
 
             var crossedBackLeft = _config.EdgeToPeer == EdgeDirection.Right && targetX < 0;
             var crossedBackRight = _config.EdgeToPeer == EdgeDirection.Left && targetX > _remoteWidth - 1;
@@ -208,12 +225,14 @@ public sealed class EdgeBridge : IDisposable
             {
                 var excess = crossedBackLeft ? -targetX : targetX - (_remoteWidth - 1);
                 var newLocalX = _anchorX + (_config.EdgeToPeer == EdgeDirection.Right ? -excess : excess);
-                var resume = _desktop.Clamp(new Point(newLocalX, _anchorY + dy));
+                var bounds = _desktop.Bounds;
+                var localY = bounds.Top + (int)((long)targetY * (bounds.Height - 1) / Math.Max(1, _remoteHeight - 1));
+                var resume = _desktop.Clamp(new Point(newLocalX, localY));
                 SwitchToLocal(resume.X, resume.Y);
                 return;
             }
 
-            _ = _connection!.SendAsync(WireMessage.MouseMove(Math.Clamp(targetX, 0, _remoteWidth - 1), targetY));
+            _ = connection.SendAsync(WireMessage.MouseMove(pointer.Position.X, pointer.Position.Y));
         }
     }
 
@@ -239,7 +258,7 @@ public sealed class EdgeBridge : IDisposable
     private void OnKeyEvent(KeyEventArgsLite e)
     {
         if (_mode != BridgeMode.Remote || _connection is null) return;
-        if (e.IsDown) _sentHeldKeys[e.VkCode] = e.IsExtended; else _sentHeldKeys.Remove(e.VkCode);
+        if (e.IsDown) _sentHeldKeys[e.VkCode] = (e.ScanCode, e.IsExtended); else _sentHeldKeys.Remove(e.VkCode);
         _ = _connection.SendAsync(WireMessage.KeyEventMsg(e.VkCode, e.ScanCode, e.IsDown, e.IsExtended));
     }
 
@@ -281,6 +300,7 @@ public sealed class EdgeBridge : IDisposable
         _anchorY = anchorY;
         _entryX = entryX;
         _entryY = Math.Clamp(entryY, 0, _remoteHeight - 1);
+        _remotePointer = new RemotePointer(new Size(_remoteWidth, _remoteHeight), new Point(_entryX, _entryY));
 
         _mouseHook.Swallow = true;
         _keyboardHook.Swallow = true;
@@ -296,6 +316,7 @@ public sealed class EdgeBridge : IDisposable
         if (_mode == BridgeMode.Local && !force) return;
         var wasRemote = _mode == BridgeMode.Remote;
         _mode = BridgeMode.Local;
+        _remotePointer = null;
         _mouseHook.Swallow = false;
         _keyboardHook.Swallow = false;
 
@@ -316,7 +337,7 @@ public sealed class EdgeBridge : IDisposable
     /// matched with an up — called on disconnect and when the peer tells us it let go.</summary>
     private void ReleaseAllInjectedInput()
     {
-        foreach (var (vk, extended) in _heldKeys) InputInjector.Key(vk, false, extended);
+        foreach (var (vk, key) in _heldKeys) InputInjector.Key(vk, false, key.Extended, key.ScanCode);
         _heldKeys.Clear();
 
         foreach (var button in _heldButtons) InputInjector.Button(button, false);
@@ -330,8 +351,8 @@ public sealed class EdgeBridge : IDisposable
     {
         if (_connection is { } conn)
         {
-            foreach (var (vk, extended) in _sentHeldKeys)
-                _ = conn.SendAsync(WireMessage.KeyEventMsg(vk, 0, false, extended));
+            foreach (var (vk, key) in _sentHeldKeys)
+                _ = conn.SendAsync(WireMessage.KeyEventMsg(vk, key.ScanCode, false, key.Extended));
             foreach (var button in _sentHeldButtons)
                 _ = conn.SendAsync(WireMessage.MouseButtonEvent(button, false));
         }
@@ -362,6 +383,7 @@ public sealed class EdgeBridge : IDisposable
     {
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         _mouseHook.Dispose();
+        _rawMouse.Dispose();
         _keyboardHook.Dispose();
     }
 }
