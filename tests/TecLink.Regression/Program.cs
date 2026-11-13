@@ -7,6 +7,8 @@ using System.Runtime.InteropServices;
 using System.Net;
 using System.Net.Sockets;
 using System.Buffers.Binary;
+using System.Text.Json;
+using TecLink.App;
 
 var checks = 0;
 void Check(bool condition, string description)
@@ -52,6 +54,37 @@ var hello = WireMessage.Decode(WireMessage.Hello("jenav", desktop.Bounds.Width, 
 Check(hello.ScreenWidth == 4400 && hello.ScreenHeight == 3560, "Existing Hello protocol carries virtual dimensions");
 var mouse = WireMessage.Decode(WireMessage.MouseMove(2159, 1159).Encode());
 Check(mouse.X == 2159 && mouse.Y == 1159, "Mouse protocol remains byte-compatible");
+var screenInfo = monitors.Select((r, n) => new DisplayInfo("display" + n, r.Left, r.Top, r.Width, r.Height)).ToArray();
+var topEntry = ScreenRouting.EntryPoint(screenInfo[0], ScreenEdge.Top, .3, screenInfo);
+Check(topEntry is not null && topEntry.Value.X >= 1680 && topEntry.Value.Y == 0, "Entry skips the portion of a side covered by another local monitor");
+var joinedInfo = new[] { new DisplayInfo("a", 0, 0, 1920, 1080), new DisplayInfo("b", 1920, 0, 1920, 1080) };
+Check(ScreenRouting.EntryPoint(joinedInfo[1], ScreenEdge.Left, .5, joinedInfo) is null, "Fully internal border cannot become a remote entry");
+foreach (var side in Enum.GetValues<ScreenEdge>())
+{
+    var info = new DisplayInfo("single", 0, 0, 1920, 1080);
+    var entryPoint = ScreenRouting.EntryPoint(info, side, .5, new[] { info });
+    Check(entryPoint is not null && single.IsExitEdge(entryPoint.Value, side), "All four real screen edges support routing");
+    Check(ScreenRouting.Opposite(ScreenRouting.Opposite(side)) == side, "Opposite edge is reversible");
+}
+Check(ScreenRouting.Crossed(new Point(20, 0), new Point(20, -1), new Rectangle(0, 0, 100, 100), ScreenEdge.Top), "Upper-border return is detected");
+Check(ScreenRouting.Crossed(new Point(20, 99), new Point(20, 101), new Rectangle(0, 0, 100, 100), ScreenEdge.Bottom), "Lower-border return is detected");
+var normalized = screenInfo.Select(d => d with { Left = d.Left - desktop.Bounds.Left, Top = d.Top - desktop.Bounds.Top }).ToArray();
+var extendedHello = WireMessage.Hello("jenav", 4400, 3560, normalized);
+var decodedHello = WireMessage.Decode(extendedHello.Encode());
+Check(decodedHello.Displays.SequenceEqual(normalized), "Optional Hello monitor metadata round trips");
+Check(WireMessage.Decode(WireMessage.Hello("old", 1920, 1080).Encode()).Displays.Length == 0, "Old Hello without metadata still decodes");
+using (var legacyReader = new BinaryReader(new MemoryStream(extendedHello.Encode())))
+{
+    Check(legacyReader.ReadByte() == (byte)MessageType.Hello && legacyReader.ReadString() == "jenav" && legacyReader.ReadInt32() == 4400 && legacyReader.ReadInt32() == 3560,
+        "Old decoder can read unchanged Hello prefix and ignore the optional tail");
+}
+var oldConfig = JsonSerializer.Deserialize<AppConfig>("{\"Role\":1,\"PeerHost\":\"192.168.12.183\",\"Port\":51777,\"EdgeToPeer\":0}")!;
+Check(oldConfig.AutomaticSwitching && !oldConfig.RoutesConfigured && oldConfig.EdgeToPeer == EdgeDirection.Left, "Old client config keeps automatic left-edge routing");
+oldConfig.ScreenOrder = new List<string> { "display1", "display0" };
+oldConfig.ScreenRoutes.Add(new ScreenRoute { SourceId = "display1", Exit = ScreenEdge.Top, TargetId = "remote1", Entry = ScreenEdge.Bottom });
+var roundTripConfig = JsonSerializer.Deserialize<AppConfig>(JsonSerializer.Serialize(oldConfig))!;
+Check(roundTripConfig.ScreenOrder[0] == "display1" && roundTripConfig.ScreenRoutes[0].Exit == ScreenEdge.Top, "Visual order and per-screen route persist in config");
+
 var pointer = new RemotePointer(new Size(1920, 1080), new Point(500, 500));
 for (var n = 0; n < 200; n++) pointer.Advance(1, 0);
 Check(pointer.Position == new Point(700, 500), "Hardware deltas accumulate instead of snapping back to entry");
@@ -123,4 +156,32 @@ Check(frames[^1].Type == MessageType.SwitchToLocal, "No old movement appears aft
 var movementFrames = frames.Count(m => m.Type == MessageType.MouseMove);
 Check(movementFrames < 1000, "High-rate movement is coalesced rather than backlogged");
 Console.WriteLine($"TCP burst: 2000 movement proposals -> {movementFrames} movement frames; all keys/buttons ordered");
-Console.WriteLine($"PASS: {checks} geometry, input and TCP regression checks");
+var mapLocal = new[] { new DisplayInfo("a", 0, 0, 1000, 800), new DisplayInfo("hdmi", -1200, 0, 1200, 800) };
+var mapRemote = new[] { new DisplayInfo("b", 0, 0, 1000, 800) };
+var placements = new[] { new ScreenPlacement("a", false, 0, 0), new ScreenPlacement("hdmi", false, -1200, 0), new ScreenPlacement("b", true, 1000, 0) };
+var spatial = SpatialMap.Build(mapLocal, mapRemote, placements);
+Check(spatial.Count == 3, "Three monitor map contains local seams and remote exits");
+var toPeer = SpatialNavigation.Find(mapLocal[0], new Point(998, 400), new Point(999, 400), spatial, mapLocal, mapRemote);
+Check(toPeer is { Route.TargetRemote: true } && toPeer.Position == new Point(1, 400), "Right edge enters peer left with inward offset");
+var toHdmi = SpatialNavigation.Find(mapLocal[0], new Point(1, 400), new Point(0, 400), spatial, mapLocal, mapRemote);
+Check(toHdmi is { Route.TargetRemote: false } && toHdmi.Position == new Point(-2, 400), "Local HDMI follows virtual map");
+var mirror = placements.Select(p => p with { Remote = !p.Remote }).ToArray();
+var peerRoutes = SpatialMap.Build(mapRemote, mapLocal, mirror);
+Check(peerRoutes.Count == 1 && peerRoutes[0].Exit == ScreenEdge.Left, "Shared map reverses ownership consistently");
+var vertical = placements.Select(p => p.Id == "b" ? p with { X = 0, Y = -800 } : p).ToArray();
+Check(SpatialMap.Build(mapLocal, mapRemote, vertical).Any(r => r.TargetRemote && r.Exit == ScreenEdge.Top && r.Entry == ScreenEdge.Bottom), "Vertical placement derives top and bottom");
+var corner = placements.Select(p => p.Id == "b" ? p with { X = 1000, Y = 800 } : p).ToArray();
+Check(!SpatialMap.Build(mapLocal, mapRemote, corner).Any(r => r.TargetRemote), "Corner contact creates no route");
+var partial = placements.Select(p => p.Id == "b" ? p with { Y = 400 } : p).ToArray();
+var partialRoutes = SpatialMap.Build(mapLocal, mapRemote, partial);
+Check(SpatialNavigation.Find(mapLocal[0], new Point(998, 100), new Point(999, 100), partialRoutes, mapLocal, mapRemote) is null, "Noncontact edge segment remains closed");
+Check(SpatialNavigation.Find(mapLocal[0], new Point(998, 600), new Point(999, 600), partialRoutes, mapLocal, mapRemote)?.Position == new Point(1, 200), "Partial seam preserves global alignment");
+try { SpatialMap.Build(mapLocal, mapRemote, placements.Select(p => p.Id == "b" ? p with { X = 500 } : p).ToArray()); Check(false, "Overlap rejected"); } catch (ArgumentException) { Check(true, "Overlap rejected"); }
+try { SpatialMap.Build(mapLocal, mapRemote, placements.Take(2).ToArray()); Check(false, "Missing screen rejected"); } catch (ArgumentException) { Check(true, "Missing screen rejected"); }
+var mapWire = WireMessage.Decode(WireMessage.Map("request", placements).Encode());
+Check(mapWire.RequestId == "request" && mapWire.Placements.SequenceEqual(placements), "Spatial map protocol round trip");
+var ackWire = WireMessage.Decode(WireMessage.MapAck("request", false, "error").Encode());
+Check(!ackWire.Accepted && ackWire.Text == "error", "Map rejection acknowledgement round trip");
+var capable = WireMessage.Decode(WireMessage.Hello("peer", 1000, 800, mapRemote, true, true).Encode());
+Check(capable.SupportsSpatialMap && capable.HasSpatialMap, "Capability negotiation round trip");
+Console.WriteLine($"PASS: {checks} geometry, input, map and TCP regression checks");

@@ -11,6 +11,7 @@ public sealed class HookMouseEventArgs : EventArgs
     public MouseButton Button { get; init; }
     public bool IsDown { get; init; }
     public int WheelDelta { get; init; }
+    public bool Suppress { get; set; }
 }
 
 /// <summary>
@@ -56,7 +57,9 @@ public sealed class MouseHook : IDisposable
             switch (msg)
             {
                 case Win32.WM_MOUSEMOVE:
-                    Move?.Invoke(new HookMouseEventArgs { X = data.pt.x, Y = data.pt.y });
+                    var move = new HookMouseEventArgs { X = data.pt.x, Y = data.pt.y };
+                    Move?.Invoke(move);
+                    if (move.Suppress) return (IntPtr)1;
                     break;
                 case Win32.WM_LBUTTONDOWN:
                     ButtonChanged?.Invoke(new HookMouseEventArgs { X = data.pt.x, Y = data.pt.y, Button = MouseButton.Left, IsDown = true });

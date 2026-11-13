@@ -1,5 +1,6 @@
 using System.Text.Json;
 using TecLink.Core.Networking;
+using TecLink.Core;
 
 namespace TecLink.App;
 
@@ -16,6 +17,13 @@ public sealed class AppConfig
 
     /// <summary>Which edge of THIS machine's screen leads to the peer.</summary>
     public EdgeDirection EdgeToPeer { get; set; } = EdgeDirection.Right;
+    public bool AutomaticSwitching { get; set; } = true;
+    public bool RoutesConfigured { get; set; }
+    public List<ScreenRoute> ScreenRoutes { get; set; } = new();
+    public List<string> ScreenOrder { get; set; } = new();
+    public string Theme { get; set; } = "system";
+    public bool UseSpatialMap { get; set; }
+    public List<ScreenPlacement> ScreenPositions { get; set; } = new();
 
     private static string ConfigPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TecLink", "config.json");
@@ -38,6 +46,8 @@ public sealed class AppConfig
     {
         var dir = Path.GetDirectoryName(ConfigPath)!;
         Directory.CreateDirectory(dir);
-        File.WriteAllText(ConfigPath, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
+        var pending = ConfigPath + ".pending";
+        File.WriteAllText(pending, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
+        File.Move(pending, ConfigPath, true);
     }
 }

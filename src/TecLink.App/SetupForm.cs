@@ -18,7 +18,8 @@ public sealed class SetupForm : Form
     {
         Text = "TecLink — configuración";
         Width = 460;
-        Height = 420;
+        Height = 480;
+        Font = new System.Drawing.Font("Segoe UI", 10);
         FormBorderStyle = FormBorderStyle.FixedDialog;
         StartPosition = FormStartPosition.CenterScreen;
         MaximizeBox = false;
@@ -27,25 +28,30 @@ public sealed class SetupForm : Form
         var y = 15;
         AddLabel("Nombre de esta PC:", y); y += 20;
         _nameBox.SetBounds(15, y, 400, 24);
-        _nameBox.Text = Environment.MachineName;
+        var existing = AppConfig.TryLoad() ?? new AppConfig();
+        _nameBox.Text = existing.MachineName;
         Controls.Add(_nameBox); y += 40;
 
         AddLabel("Rol:", y); y += 20;
-        _roleServer.SetBounds(15, y, 420, 24); _roleServer.Checked = true; Controls.Add(_roleServer); y += 26;
+        _roleServer.SetBounds(15, y, 420, 24); _roleServer.Checked = existing.Role == PeerRole.Server; Controls.Add(_roleServer); y += 26;
         _roleClient.SetBounds(15, y, 420, 24); Controls.Add(_roleClient); y += 36;
 
         AddLabel("IP de la otra PC (solo si esta PC es Cliente):", y); y += 20;
         _hostBox.SetBounds(15, y, 400, 24);
         Controls.Add(_hostBox); y += 40;
+        _hostBox.Text = existing.PeerHost;
+        _roleClient.Checked = existing.Role == PeerRole.Client;
 
         AddLabel("Puerto:", y); y += 20;
         _portBox.SetBounds(15, y, 120, 24);
-        _portBox.Text = Core.Networking.PeerServer.DefaultPort.ToString();
+        _portBox.Text = existing.Port.ToString();
         Controls.Add(_portBox); y += 40;
 
         AddLabel("¿Por dónde sale el mouse hacia la otra PC?", y); y += 20;
         _edgeRight.SetBounds(15, y, 420, 24); _edgeRight.Checked = true; Controls.Add(_edgeRight); y += 26;
         _edgeLeft.SetBounds(15, y, 420, 24); Controls.Add(_edgeLeft); y += 40;
+        _edgeRight.Checked = existing.EdgeToPeer == EdgeDirection.Right;
+        _edgeLeft.Checked = existing.EdgeToPeer == EdgeDirection.Left;
 
         var okButton = new Button { Text = "Guardar y conectar", DialogResult = DialogResult.OK };
         okButton.SetBounds(15, y, 180, 30);
@@ -66,14 +72,12 @@ public sealed class SetupForm : Form
     {
         if (!int.TryParse(_portBox.Text, out var port)) port = Core.Networking.PeerServer.DefaultPort;
 
-        Result = new AppConfig
-        {
-            MachineName = string.IsNullOrWhiteSpace(_nameBox.Text) ? Environment.MachineName : _nameBox.Text,
-            Role = _roleServer.Checked ? PeerRole.Server : PeerRole.Client,
-            PeerHost = _hostBox.Text.Trim(),
-            Port = port,
-            EdgeToPeer = _edgeRight.Checked ? EdgeDirection.Right : EdgeDirection.Left,
-        };
+        Result = AppConfig.TryLoad() ?? new AppConfig();
+        Result.MachineName = string.IsNullOrWhiteSpace(_nameBox.Text) ? Environment.MachineName : _nameBox.Text;
+        Result.Role = _roleServer.Checked ? PeerRole.Server : PeerRole.Client;
+        Result.PeerHost = _hostBox.Text.Trim();
+        Result.Port = port;
+        Result.EdgeToPeer = _edgeRight.Checked ? EdgeDirection.Right : EdgeDirection.Left;
         Result.Save();
         DialogResult = DialogResult.OK;
         Close();

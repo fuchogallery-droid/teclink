@@ -16,13 +16,22 @@ public sealed class DesktopLayout
         Bounds = _screens.Aggregate(Rectangle.Union);
     }
 
-    public bool IsExitEdge(Point point, bool right)
+    public bool IsExitEdge(Point point, bool right) => IsExitEdge(point, right ? ScreenEdge.Right : ScreenEdge.Left);
+
+    public bool IsExitEdge(Point point, ScreenEdge side)
     {
         foreach (var screen in _screens)
         {
             if (!screen.Contains(point)) continue;
-            if (right ? point.X != screen.Right - 1 : point.X != screen.Left) return false;
-            var next = new Point(point.X + (right ? 1 : -1), point.Y);
+            var along = ScreenRouting.Vertical(side) ? point.Y : point.X;
+            if (ScreenRouting.OnEdge(screen, side, along) != point) return false;
+            var next = side switch
+            {
+                ScreenEdge.Left => new Point(point.X - 1, point.Y),
+                ScreenEdge.Right => new Point(point.X + 1, point.Y),
+                ScreenEdge.Top => new Point(point.X, point.Y - 1),
+                _ => new Point(point.X, point.Y + 1),
+            };
             return !_screens.Any(r => r.Contains(next));
         }
         return false;

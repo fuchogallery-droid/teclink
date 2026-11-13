@@ -7,6 +7,7 @@ public sealed class RemotePointer
 {
     private readonly Size _size;
     public Point Position { get; private set; }
+    public void SetPosition(Point point) => Position = new Point(Math.Clamp(point.X, 0, _size.Width - 1), Math.Clamp(point.Y, 0, _size.Height - 1));
 
     public RemotePointer(Size size, Point entry)
     {
@@ -15,13 +16,13 @@ public sealed class RemotePointer
         Position = new Point(Math.Clamp(entry.X, 0, size.Width - 1), Math.Clamp(entry.Y, 0, size.Height - 1));
     }
 
-    // X may cross an edge so the caller can hand control back. Stored coordinates
+    // Proposed coordinates may cross an edge so the caller can hand control back. Stored coordinates
     // remain bounded; sitting at the top/bottom never accumulates invisible movement.
     public Point Advance(int deltaX, int deltaY)
     {
         var x = (long)Position.X + deltaX;
-        var y = Math.Clamp((long)Position.Y + deltaY, 0, _size.Height - 1);
-        Position = new Point((int)Math.Clamp(x, 0, _size.Width - 1), (int)y);
-        return new Point((int)Math.Clamp(x, int.MinValue, int.MaxValue), (int)y);
+        var y = (long)Position.Y + deltaY;
+        Position = new Point((int)Math.Clamp(x, 0, _size.Width - 1), (int)Math.Clamp(y, 0, _size.Height - 1));
+        return new Point((int)Math.Clamp(x, int.MinValue, int.MaxValue), (int)Math.Clamp(y, int.MinValue, int.MaxValue));
     }
 }

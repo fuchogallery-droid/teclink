@@ -3,3 +3,4 @@ obj/
 *.user
 publish/
 relevo/
+node_modules/
