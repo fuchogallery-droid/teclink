@@ -48,11 +48,37 @@ public sealed class TrayAppContext : ApplicationContext
         };
         _trayIcon.DoubleClick += (_, _) => ShowPanel();
 
+        _powerItem = new ToolStripMenuItem("Encendido") { Checked = true, CheckOnClick = false };
+        _powerItem.Click += (_, _) => SetPower(!_bridge.Powered);
+        menu.Items.Insert(0, _powerItem);
+
         _bridge.InstallHooks();
-        _ = _bridge.RunNetworkingAsync(_cts.Token).ContinueWith(
-            t => Logger.LogError(t.Exception),
-            TaskContinuationOptions.OnlyOnFaulted);
+        StartNetworking();
         _clipboard.BeginInvoke(ShowPanel);
+    }
+
+    private ToolStripMenuItem _powerItem = null!;
+    private CancellationTokenSource? _netCts;
+
+    private void StartNetworking()
+    {
+        _netCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
+        _ = _bridge.RunNetworkingAsync(_netCts.Token).ContinueWith(
+            t => { if (t.Exception!.InnerExceptions.Any(e => e is not OperationCanceledException)) Logger.LogError(t.Exception); },
+            TaskContinuationOptions.OnlyOnFaulted);
+    }
+
+    /// <summary>Master on/off: off hands control back locally, drops the connection and stops
+    /// reconnecting; on resumes connecting. Hooks stay installed but are inert without a peer.</summary>
+    private void SetPower(bool on)
+    {
+        if (on == _bridge.Powered) return;
+        _bridge.Powered = on;
+        _powerItem.Checked = on;
+        if (on) StartNetworking();
+        else { _netCts?.Cancel(); _netCts = null; }
+        OnControlChanged(on ? "TecLink encendido" : "TecLink apagado");
+        _panel?.RefreshState();
     }
 
     private void OnStatusChanged(string status)
@@ -84,7 +110,7 @@ public sealed class TrayAppContext : ApplicationContext
 
     private void ShowPanel()
     {
-        if (_panel is null || _panel.IsDisposed) _panel = new ControlPanelForm(_bridge, () => _status, ShowViewer);
+        if (_panel is null || _panel.IsDisposed) _panel = new ControlPanelForm(_bridge, () => _status, ShowViewer, SetPower);
         _panel.Show();
         if (_panel.WindowState == FormWindowState.Minimized) _panel.WindowState = FormWindowState.Normal;
         _panel.Activate();

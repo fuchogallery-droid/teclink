@@ -28,9 +28,11 @@ public sealed class ControlPanelForm : Form
         public List<ScreenPlacement>? Placements { get; set; }
     }
 
-    public ControlPanelForm(EdgeBridge bridge, Func<string> status, Action openViewer)
+    private readonly Action<bool> _setPower;
+
+    public ControlPanelForm(EdgeBridge bridge, Func<string> status, Action openViewer, Action<bool> setPower)
     {
-        _bridge = bridge; _status = status; _openViewer = openViewer;
+        _bridge = bridge; _status = status; _openViewer = openViewer; _setPower = setPower;
         Text = "TecLink — pantallas y salidas";
         Icon = TrayAppContext.AppIcon;
         ClientSize = new Size(1120, 760);
@@ -113,6 +115,7 @@ public sealed class ControlPanelForm : Form
                     Directory.CreateDirectory(_bridge.Files.ReceiveFolder);
                     System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(_bridge.Files.ReceiveFolder) { UseShellExecute = true });
                     break;
+                case "setPower": _setPower(root.GetProperty("on").GetBoolean()); RefreshState(); break;
             }
         }
         catch (Exception ex) when (ex is ArgumentException or JsonException or IOException or UnauthorizedAccessException)

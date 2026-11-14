@@ -68,6 +68,9 @@ public sealed class EdgeBridge : IDisposable
     private readonly Dictionary<int, (int ScanCode, bool Extended)> _sentHeldKeys = new();
     private readonly HashSet<MouseButtonKind> _sentHeldButtons = new();
 
+    /// <summary>Master power switch state (tray menu / panel). Off = no connection, no hotkey handoff.</summary>
+    public bool Powered { get; set; } = true;
+
     public event Action<string>? StatusChanged;
 
     /// <summary>Fires only on an actual control handoff (not on every connection status
@@ -143,8 +146,9 @@ public sealed class EdgeBridge : IDisposable
 
             await Task.WhenAny(disconnectedTcs.Task, Task.Delay(Timeout.Infinite, ct));
 
-            StatusChanged?.Invoke("Conexión perdida. Reintentando...");
+            StatusChanged?.Invoke(ct.IsCancellationRequested ? "TecLink apagado" : "Conexión perdida. Reintentando...");
             _connection = null;
+            _remoteKnown = false;
             _peerControlling = false;
             _peerExtras = false;
             _screenHost.Stop();
@@ -401,6 +405,11 @@ public sealed class EdgeBridge : IDisposable
             _clipboard.BeginInvoke(() => ViewerCloseRequested?.Invoke());
             return;
         }
+        if (!Powered)
+        {
+            StatusChanged?.Invoke("TecLink está apagado");
+            return;
+        }
         if (_connection is null || !_remoteKnown)
         {
             StatusChanged?.Invoke("Atajo presionado, pero no hay conexión con la otra PC todavía");
@@ -524,7 +533,7 @@ public sealed class EdgeBridge : IDisposable
             machineName = _config.MachineName, remoteName = _remoteName,
             connected = _connection is not null && _remoteKnown,
             mode = _mode == BridgeMode.Remote ? "remote" : _peerControlling ? "peer" : "local", status,
-            automatic = _config.AutomaticSwitching, theme = _config.Theme,
+            automatic = _config.AutomaticSwitching, theme = _config.Theme, powered = Powered,
             placements = _config.ScreenPositions, spatialEnabled = _config.UseSpatialMap, peerMapSupported = _peerMapSupported,
             host = _config.PeerHost, port = _config.Port, role = _config.Role.ToString(),
             pointerSpeed = CurrentSpeedLevel(), cursorStyle = CursorStyler.Normalize(_config.CursorStyle),

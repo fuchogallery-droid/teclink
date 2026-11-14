@@ -78,7 +78,11 @@
     const contacts = M.contacts(rects()), overlaps = M.overlaps(rects()), s = selectedRect();
     $('connection').textContent = state.connected ? 'Conectado' : 'Sin conexión'; $('connection').classList.toggle('connected', state.connected);
     $('mode').textContent = { local: 'Control local', remote: 'Controlando la otra PC', peer: 'La otra PC tiene el mando' }[state.mode];
-    $('toggle-control').disabled = !state.connected || saving;
+    const on = state.powered !== false, remote = state.mode === 'remote';
+    $('power').setAttribute('aria-pressed', on); $('power-label').textContent = on ? 'Encendido' : 'Apagado';
+    $('toggle-control').setAttribute('aria-checked', remote);
+    $('switch-label').textContent = remote ? 'Mando: la otra PC' : state.mode === 'peer' ? 'Mando: la otra PC (te controla)' : 'Mando: esta PC';
+    $('toggle-control').disabled = !on || !state.connected || saving;
     $('link-count').textContent = contacts.length + (contacts.length === 1 ? ' unión' : ' uniones');
     $('map-warning').textContent = overlaps ? 'Las pantallas se superponen. Sepáralas antes de guardar.' : contacts.length ? 'La línea verde marca cada paso del ratón.' : 'Sin rutas: acerca los bordes de dos pantallas para unirlas.';
     $('sync-message').textContent = state.peerMapSupported ? 'Al guardar, el mapa se comparte con la otra PC.' : 'Actualiza TecLink en la otra PC para compartir este mapa. Se puede guardar aquí.';
@@ -135,6 +139,7 @@
   $('theme').onchange = e => { draft.theme = e.target.value; dirty = true; theme(); update(); };
   $('save').onclick = () => { if (saving || M.overlaps(rects())) return; saving = true; update(); send({ type: 'save', map: structuredClone(draft) }); };
   $('toggle-control').onclick = () => send({ type: 'toggleControl' });
+  $('power').onclick = () => send({ type: 'setPower', on: $('power').getAttribute('aria-pressed') !== 'true' });
   $('fit-map').onclick = fit;
   function zoom(factor) { const board = $('spatial-map'), old = view.scale, next = Math.max(.015, Math.min(.5, old * factor)), cx = board.clientWidth / 2, cy = board.clientHeight / 2; view.x = cx - (cx - view.x) * next / old; view.y = cy - (cy - view.y) * next / old; view.scale = next; draw(); }
   $('zoom-in').onclick = () => zoom(1.25); $('zoom-out').onclick = () => zoom(.8);
