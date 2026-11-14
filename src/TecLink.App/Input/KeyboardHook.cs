@@ -22,6 +22,8 @@ public sealed class KeyboardHook : IDisposable
     private IntPtr _hookHandle;
     private bool _hotkeyActive; // true from the moment Ctrl+Alt+Space is recognized until Space is released
 
+    private readonly HashSet<int> _osDown = new();
+
     public bool Swallow { get; set; }
 
     public event Action<KeyEventArgsLite>? KeyEvent;
@@ -81,6 +83,13 @@ public sealed class KeyboardHook : IDisposable
                     IsExtended = (data.flags & LLKHF_EXTENDED) != 0,
                 });
             }
+
+            // Keys the OS already saw go down must also see their key-up, even when we are
+            // swallowing now (e.g. Ctrl+Alt held while the hotkey flips to Remote). Otherwise
+            // Windows keeps Ctrl/Alt "stuck" and the whole PC misbehaves.
+            if (isDown && !Swallow) _osDown.Add(vkCode);
+            if (isUp && _osDown.Remove(vkCode))
+                return Win32.CallNextHookEx(_hookHandle, nCode, wParam, lParam);
 
             if (Swallow)
                 return (IntPtr)1;

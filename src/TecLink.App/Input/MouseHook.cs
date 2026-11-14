@@ -25,6 +25,8 @@ public sealed class MouseHook : IDisposable
     private readonly Win32.HookProc _proc; // keep alive: SetWindowsHookEx does not pin delegates
     private IntPtr _hookHandle;
 
+    private readonly HashSet<int> _osDown = new();
+
     public bool Swallow { get; set; }
 
     public event Action<HookMouseEventArgs>? Move;
@@ -83,6 +85,18 @@ public sealed class MouseHook : IDisposable
                     var delta = (short)((data.mouseData >> 16) & 0xFFFF);
                     Wheel?.Invoke(new HookMouseEventArgs { X = data.pt.x, Y = data.pt.y, WheelDelta = delta });
                     break;
+            }
+
+            // A button the OS saw go down must also see its release (drag that crosses to the
+            // other PC), otherwise Windows keeps it stuck.
+            var downKey = msg switch { Win32.WM_LBUTTONDOWN or Win32.WM_LBUTTONUP => 0, Win32.WM_RBUTTONDOWN or Win32.WM_RBUTTONUP => 1,
+                Win32.WM_MBUTTONDOWN or Win32.WM_MBUTTONUP => 2, _ => -1 };
+            if (downKey >= 0)
+            {
+                var isDown = msg is Win32.WM_LBUTTONDOWN or Win32.WM_RBUTTONDOWN or Win32.WM_MBUTTONDOWN;
+                if (isDown && !Swallow) _osDown.Add(downKey);
+                else if (!isDown && _osDown.Remove(downKey))
+                    return Win32.CallNextHookEx(_hookHandle, nCode, wParam, lParam);
             }
 
             if (Swallow)

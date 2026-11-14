@@ -8,3 +8,5 @@
 6. error.log: ExternalException 0x800401D0 en ClipboardWatcher.WndProc (Clipboard.ContainsText) cuando otra app tiene el portapapeles abierto. Pendiente: reintentar o ignorar.
 
 Novedad de esta rama: boton Encendido/Apagado (panel y bandeja) y switch de mando inmediato.
+
+7. Causa raiz de las teclas pegadas (13/11/2026): al activar el modo remoto con Ctrl+Alt+Espacio el hook empezaba a tragarse tambien el KEYUP de Ctrl y Alt (y de un boton del mouse en un arrastre al cruzar), asi que Windows las daba por pulsadas. Corregido: el hook deja pasar el 'soltar' de toda tecla o boton que el sistema ya vio pulsar.
