@@ -34,6 +34,11 @@ public sealed class ControlPanelForm : Form
     private readonly Action<string> _peerFilesHandler;
     private readonly Action<string, string> _chatHandler;
     private readonly Action<byte[]> _voiceHandler;
+    private readonly Action<bool, string, byte[]> _tileHandler;
+    private readonly Action<string, string> _removalHandler;
+    private readonly Action<string> _noticeHandler;
+    private readonly Action _controlOffHandler;
+    private bool _tileControl;
 
     public ControlPanelForm(EdgeBridge bridge, Func<string> status, Action openViewer, Action<bool> setPower, Action<string, string?, string?> session)
     {
@@ -51,6 +56,14 @@ public sealed class ControlPanelForm : Form
         _chatHandler = (from, text) => { if (!IsDisposed && IsHandleCreated) BeginInvoke(() => Post(new { type = "chat", from, text, at = DateTimeOffset.UtcNow.ToUnixTimeSeconds() })); };
         _voiceHandler = pcm => { if (!IsDisposed && IsHandleCreated) BeginInvoke(() => Post(new { type = "voice", data = Convert.ToBase64String(pcm) })); };
         bridge.ChatReceived += _chatHandler; bridge.VoiceReceived += _voiceHandler;
+        _tileHandler = (remote, id, jpeg) => { if (!IsDisposed && IsHandleCreated) BeginInvoke(() => Post(new { type = "tile", remote, id, data = Convert.ToBase64String(jpeg) })); };
+        _removalHandler = (id, label) => { if (!IsDisposed && IsHandleCreated) BeginInvoke(() => { Post(new { type = "removeAsk", id, label, from = _bridge.RemoteName }); Show(); Activate(); }); };
+        _noticeHandler = text => { if (!IsDisposed && IsHandleCreated) BeginInvoke(() => { Post(new { type = "toast", message = text }); RefreshState(); }); };
+        _controlOffHandler = () => { if (!IsDisposed && IsHandleCreated) BeginInvoke(() => { _tileControl = false; _bridge.SetViewInput(false); Post(new { type = "controlOff" }); }); };
+        bridge.TileReceived += _tileHandler; bridge.RemovalAsked += _removalHandler; bridge.Notice += _noticeHandler; bridge.ViewerCloseRequested += _controlOffHandler;
+        // Controlling the other PC from a tile only lasts while this window is in front.
+        Deactivate += (_, _) => { if (_tileControl) { _tileControl = false; _bridge.SetViewInput(false); Post(new { type = "controlOff" }); } };
+        VisibleChanged += (_, _) => { if (!Visible) _bridge.WatchScreens(false, 0); else Post(new { type = "shown" }); };
         Shown += async (_, _) => await InitializeAsync();
         FormClosing += (_, e) => { if (!_shutdown && e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; Hide(); } };
     }
@@ -117,16 +130,43 @@ public sealed class ControlPanelForm : Form
                     break;
                 case "viewScreen": _openViewer(); break;
                 case "pickFiles":
-                    using (var files = new OpenFileDialog { Multiselect = true, Title = "Enviar archivos a la otra PC" })
-                        if (files.ShowDialog(this) == DialogResult.OK) _ = _bridge.Files.SendAsync(files.FileNames);
+                    using (var files = new OpenFileDialog { Multiselect = true, Title = "Compartir archivos con la sesión" })
+                        if (files.ShowDialog(this) == DialogResult.OK) { _bridge.ShareFiles(files.FileNames); RefreshState(); }
                     break;
                 case "pickFolder":
-                    using (var folder = new FolderBrowserDialog { Description = "Enviar una carpeta completa a la otra PC", UseDescriptionForTitle = true })
-                        if (folder.ShowDialog(this) == DialogResult.OK) _ = _bridge.Files.SendAsync(new[] { folder.SelectedPath });
+                    using (var folder = new FolderBrowserDialog { Description = "Compartir una carpeta completa con la sesión", UseDescriptionForTitle = true })
+                        if (folder.ShowDialog(this) == DialogResult.OK) { _bridge.ShareFiles(new[] { folder.SelectedPath }); RefreshState(); }
+                    break;
+                case "shareAction": _bridge.ShareAction(root.GetProperty("id").GetString() ?? "", root.GetProperty("action").GetString() ?? ""); RefreshState(); break;
+                case "autoReceive": _bridge.SetAutoReceive(root.GetProperty("on").GetBoolean()); RefreshState(); break;
+                case "watch":
+                    _bridge.WatchScreens(root.GetProperty("on").GetBoolean(), root.TryGetProperty("width", out var width) ? width.GetInt32() : 480,
+                        root.TryGetProperty("focusRemote", out var fr) && fr.ValueKind is JsonValueKind.True or JsonValueKind.False ? fr.GetBoolean() : null,
+                        root.TryGetProperty("focusId", out var fid) ? fid.GetString() : null);
+                    break;
+                case "tileControl":
+                    _tileControl = root.GetProperty("on").GetBoolean();
+                    _bridge.SetViewInput(_tileControl); RefreshState();
+                    break;
+                case "tileMove": _bridge.TileMove(root.GetProperty("id").GetString() ?? "", root.GetProperty("x").GetDouble(), root.GetProperty("y").GetDouble()); break;
+                case "tileButton":
+                    _bridge.ViewerButton(root.GetProperty("button").GetInt32() switch { 2 => TecLink.Core.Protocol.MouseButtonKind.Right, 1 => TecLink.Core.Protocol.MouseButtonKind.Middle, _ => TecLink.Core.Protocol.MouseButtonKind.Left }, root.GetProperty("down").GetBoolean());
+                    break;
+                case "tileWheel": _bridge.ViewerWheel(root.GetProperty("delta").GetInt32()); break;
+                case "removeAsk": _bridge.RequestRemoveScreen(root.GetProperty("id").GetString() ?? ""); break;
+                case "removeAnswer": _bridge.AnswerRemoval(root.GetProperty("id").GetString() ?? "", root.GetProperty("accept").GetBoolean()); break;
+                case "repair":
+                    // One button for "it does not connect": allow TecLink in the Firewall (Windows asks once) and report what the network shows.
+                    _ = Task.Run(async () =>
+                    {
+                        if (!EdgeBridge.CheckFirewall()) _bridge.AllowFirewall();
+                        var lines = await _bridge.DiagnoseAsync(CancellationToken.None);
+                        if (!IsDisposed && IsHandleCreated) BeginInvoke(() => { Post(new { type = "diagnostic", lines }); RefreshState(); });
+                    });
                     break;
                 case "dropFiles":
                     var dropped = e.AdditionalObjects.OfType<CoreWebView2File>().Select(f => f.Path).Where(p => !string.IsNullOrEmpty(p)).ToArray();
-                    if (dropped.Length > 0) _ = _bridge.Files.SendAsync(dropped);
+                    if (dropped.Length > 0) { _bridge.ShareFiles(dropped); RefreshState(); }
                     else Post(new { type = "error", message = "No se pudo leer lo que soltaste. Usa «Elegir archivos» o «Elegir carpeta»." });
                     break;
                 case "openReceived":
@@ -178,5 +218,5 @@ public sealed class ControlPanelForm : Form
 
     private void Post(object message) { if (_ready && !_web.IsDisposed) _web.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(message, Json)); }
     public void RefreshState() => Post(new { type = "state", state = _bridge.ViewState(_status()) });
-    public void Shutdown() { _bridge.CameraFrameReceived -= _cameraHandler; _bridge.PeerFilesReceived -= _peerFilesHandler; _bridge.ChatReceived -= _chatHandler; _bridge.VoiceReceived -= _voiceHandler; _shutdown = true; Close(); Dispose(); }
+    public void Shutdown() { _bridge.TileReceived -= _tileHandler; _bridge.RemovalAsked -= _removalHandler; _bridge.Notice -= _noticeHandler; _bridge.ViewerCloseRequested -= _controlOffHandler; _bridge.WatchScreens(false, 0);_bridge.CameraFrameReceived -= _cameraHandler; _bridge.PeerFilesReceived -= _peerFilesHandler; _bridge.ChatReceived -= _chatHandler; _bridge.VoiceReceived -= _voiceHandler; _shutdown = true; Close(); Dispose(); }
 }

@@ -95,6 +95,12 @@ public sealed class WireMessage
     /// <summary>First byte = 1 when the person is already cut out (transparent background); the rest is a WebP image.</summary>
     public static WireMessage CameraFrame(byte[] data) => new() { Type = MessageType.CameraFrame, Data = data };
     public static WireMessage ProbeMsg(string code) => new() { Type = MessageType.Probe, Text = code };
+    public static WireMessage Yield() => new() { Type = MessageType.Yield };
+    public static WireMessage ScreenRemoval(string text) => new() { Type = MessageType.ScreenRemoval, Text = text };
+    public static WireMessage ScreenWatch(string text) => new() { Type = MessageType.ScreenWatch, Text = text };
+    public static WireMessage ScreenTile(int index, int width, int height, byte[] jpeg) => new() { Type = MessageType.ScreenTile, Index = index, Width = width, Height = height, Data = jpeg };
+    public static WireMessage ShareOffer(string json) => new() { Type = MessageType.ShareOffer, Text = json };
+    public static WireMessage ShareFetch(string id) => new() { Type = MessageType.ShareFetch, Text = id };
     public static WireMessage Leave() => new() { Type = MessageType.Leave };
     public static WireMessage ChatText(string text) => new() { Type = MessageType.Chat, Text = text };
     public static WireMessage VoiceChunk(byte[] pcm) => new() { Type = MessageType.Voice, Data = pcm };
@@ -207,6 +213,13 @@ public sealed class WireMessage
             case MessageType.Voice:
                 w.Write(Data.Length); w.Write(Data);
                 break;
+            case MessageType.ScreenTile:
+                w.Write(Index); w.Write(Width); w.Write(Height); w.Write(Data.Length); w.Write(Data);
+                break;
+            case MessageType.ScreenRemoval:
+            case MessageType.ScreenWatch:
+            case MessageType.ShareOffer:
+            case MessageType.ShareFetch:
             case MessageType.Chat:
             case MessageType.Probe:
             case MessageType.FileList:
@@ -264,7 +277,8 @@ public sealed class WireMessage
             MessageType.SpatialMapAck => new WireMessage { Type = type, RequestId = r.ReadString(), Accepted = r.ReadBoolean(), Text = r.ReadString() },
             MessageType.ScreenStop or MessageType.ScreenAck => new WireMessage { Type = type },
             MessageType.CameraFrame or MessageType.Voice => new WireMessage { Type = type, Data = ReadBytes(r) },
-            MessageType.Chat or MessageType.Probe or MessageType.FileList or MessageType.FileCommand => new WireMessage { Type = type, Text = r.ReadString() },
+            MessageType.ScreenTile => new WireMessage { Type = type, Index = r.ReadInt32(), Width = r.ReadInt32(), Height = r.ReadInt32(), Data = ReadBytes(r) },
+            MessageType.ScreenRemoval or MessageType.ScreenWatch or MessageType.ShareOffer or MessageType.ShareFetch or MessageType.Chat or MessageType.Probe or MessageType.FileList or MessageType.FileCommand => new WireMessage { Type = type, Text = r.ReadString() },
             MessageType.Join => new WireMessage { Type = type, Text = r.ReadString() },
             MessageType.JoinResult => new WireMessage { Type = type, Accepted = r.ReadBoolean(), Text = r.ReadString() },
             MessageType.Management => new WireMessage { Type = type, Accepted = r.ReadBoolean() },

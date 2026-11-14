@@ -399,6 +399,43 @@ finally { try { Directory.Delete(work, true); } catch (IOException) { } }
     Check(repaired.All(p => !p.Hidden), "The host's own screens come back after a wrong removal");
 }
 
+// ---- The session owner's map: completed automatically, mouse crosses both ways, new messages ----
+{
+    var hostScreens = new[] { new DisplayInfo("\\\\.\\DISPLAY1", 0, 0, 2240, 1400), new DisplayInfo("\\\\.\\DISPLAY2", -1600, -2160, 3840, 2160) };
+    var guestScreens = new[] { new DisplayInfo("\\\\.\\DISPLAY1", 0, 0, 1920, 1080) };
+    // nothing stored yet, and a stale map from another guest
+    foreach (var existing in new[] { new List<ScreenPlacement>(), new List<ScreenPlacement> { new("\\\\.\\DISPLAY1", false, 0, 0), new("\\\\.\\DISPLAY2", false, -1600, -2160), new("OLD", true, 50, 50) } })
+    {
+        var map = SpatialMap.Complete(hostScreens, guestScreens, existing);
+        Check(map.Count == 3 && map.Count(p => p.Remote) == 1, "Complete places every connected screen once");
+        Check(SpatialMap.Build(hostScreens, guestScreens, map).Count > 0, "The completed map is valid and has routes");
+        var routesHost = SpatialMap.Build(hostScreens, guestScreens, map);
+        var routesGuest = SpatialMap.Build(guestScreens, hostScreens, map.Select(p => p with { Remote = !p.Remote }).ToArray());
+        // owner -> guest: leave the right edge of the owner's main monitor
+        var toGuest = SpatialNavigation.Find(hostScreens[0], new Point(2239, 700), new Point(2240, 700), routesHost, hostScreens, guestScreens);
+        Check(toGuest is { Route.TargetRemote: true } && toGuest.Position.X <= 1, "Mouse crosses from the owner's right edge into the guest's screen");
+        // guest -> owner: leave the left edge of the guest's screen
+        var toHost = SpatialNavigation.Find(guestScreens[0], new Point(0, 500), new Point(-1, 500), routesGuest, guestScreens, hostScreens);
+        Check(toHost is { Route.TargetRemote: true } && toHost.Target.Id == hostScreens[0].Id, "Mouse comes back from the guest's left edge to the owner's main screen");
+        Check(SpatialNavigation.Find(guestScreens[0], new Point(1000, 500), new Point(1001, 500), routesGuest, guestScreens, hostScreens) is null, "No crossing in the middle of a screen");
+    }
+    var kept = SpatialMap.Complete(hostScreens, guestScreens, new List<ScreenPlacement> { new("\\\\.\\DISPLAY1", false, 0, 0), new("\\\\.\\DISPLAY2", false, -1600, -2160), new("\\\\.\\DISPLAY1", true, 0, 1400) });
+    Check(kept.Single(p => p.Remote).Y == 1400, "A guest screen the owner already placed keeps its place");
+    var overlapping = SpatialMap.Complete(hostScreens, guestScreens, new List<ScreenPlacement> { new("\\\\.\\DISPLAY1", false, 0, 0), new("\\\\.\\DISPLAY2", false, -1600, -2160), new("\\\\.\\DISPLAY1", true, 10, 10) });
+    Check(SpatialMap.Build(hostScreens, guestScreens, overlapping).Count > 0, "An overlapping stored map is repaired");
+
+    Check(WireMessage.Decode(WireMessage.Yield().Encode()).Type == MessageType.Yield, "Yield round-trips");
+    var removal = WireMessage.Decode(WireMessage.ScreenRemoval("ask:\\\\.\\DISPLAY1").Encode());
+    Check(removal.Type == MessageType.ScreenRemoval && removal.Text == "ask:\\\\.\\DISPLAY1", "Removal consent round-trips");
+    var watch = WireMessage.Decode(WireMessage.ScreenWatch("480|0,1").Encode());
+    Check(watch.Type == MessageType.ScreenWatch && watch.Text == "480|0,1", "Screen watch round-trips");
+    var tile = WireMessage.Decode(WireMessage.ScreenTile(1, 1920, 1080, new byte[] { 1, 2, 3 }).Encode());
+    Check(tile.Type == MessageType.ScreenTile && tile.Index == 1 && tile.Width == 1920 && tile.Data.Length == 3, "Screen tile round-trips");
+    var offer = WireMessage.Decode(WireMessage.ShareOffer("{\"id\":\"a\"}").Encode());
+    Check(offer.Type == MessageType.ShareOffer && offer.Text == "{\"id\":\"a\"}", "Share offer round-trips");
+    Check(WireMessage.Decode(WireMessage.ShareFetch("abc").Encode()) is { Type: MessageType.ShareFetch, Text: "abc" }, "Share fetch round-trips");
+}
+
 // ---- TCP search (no UDP needed): a probe confirms the code without becoming a guest ----
 {
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));

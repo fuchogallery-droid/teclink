@@ -86,12 +86,16 @@ public sealed class FileTransfers
         }
     }
 
-    public async Task SendAsync(IReadOnlyCollection<string> paths)
+    /// <summary>Raised when a transfer from the peer finished: (transfer id, full paths of what arrived at the top level).</summary>
+    public event Action<string, IReadOnlyList<string>>? Arrived;
+
+    /// <param name="transferId">Optional: lets the receiver match what arrives with something it asked for.</param>
+    public async Task SendAsync(IReadOnlyCollection<string> paths, string? transferId = null)
     {
         if (paths.Count == 0) return;
         if (_connection() is null) { Report("No se envió: la otra PC no está conectada o necesita actualizarse."); return; }
         await _sendTurn.WaitAsync();
-        var id = Guid.NewGuid().ToString("N");
+        var id = transferId ?? Guid.NewGuid().ToString("N");
         var cancel = new CancellationTokenSource();
         lock (_gate) _outgoing[id] = cancel;
         try
@@ -282,6 +286,7 @@ public sealed class FileTransfers
                         _ = _connection()?.SendAsync(WireMessage.TransferDone(id, true, summary));
                         Report($"Recibido: {summary} en {ReceiveFolder}");
                         Received?.Invoke(state.Items, ReceiveFolder);
+                        Arrived?.Invoke(id, state.Roots.Values.Select(name => Path.Combine(ReceiveFolder, name)).ToList());
                     }
                     else
                     {

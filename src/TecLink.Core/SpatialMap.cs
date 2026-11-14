@@ -23,6 +23,59 @@ public static class SpatialMap
             .ToList();
     }
 
+    /// <summary>
+    /// The session owner's map must always be usable: every connected screen placed exactly once and none overlapping.
+    /// Keeps what the owner already arranged; a screen that is new goes to the right of everything else
+    /// (a guest's monitors keep their own relative arrangement). If the result is still not valid it starts over:
+    /// the owner's monitors as Windows has them and the guest's to their right.
+    /// </summary>
+    public static List<ScreenPlacement> Complete(DisplayInfo[] local, DisplayInfo[] remote, IReadOnlyList<ScreenPlacement> existing)
+    {
+        void AppendRemote(List<ScreenPlacement> list, bool keepHidden)
+        {
+            if (remote.Length == 0) return;
+            var visible = list.Where(p => !p.Hidden).Select(p => (p, d: (p.Remote ? remote : local).First(d => d.Id == p.Id))).ToArray();
+            var right = visible.Length == 0 ? 0 : visible.Max(v => v.p.X + v.d.Width);
+            var top = visible.Length == 0 ? 0 : visible.Where(v => v.p.X + v.d.Width == right).Min(v => v.p.Y);
+            var originX = remote.Min(d => d.Left); var originY = remote.Min(d => d.Top);
+            // First choice: right beside the owner's main monitor (the one at 0,0 in Windows), where people expect it.
+            // If something is already there, to the right of everything.
+            var main = visible.Where(v => !v.p.Remote).Select(v => (v.p, v.d)).Cast<(ScreenPlacement p, DisplayInfo d)?>()
+                .FirstOrDefault(v => v!.Value.d.Left == 0 && v.Value.d.Top == 0) ?? visible.Where(v => !v.p.Remote).Cast<(ScreenPlacement p, DisplayInfo d)?>().FirstOrDefault();
+            var at = (X: right, Y: top);
+            if (main is { } m)
+            {
+                var candidate = (X: m.p.X + m.d.Width, Y: m.p.Y);
+                bool Free((int X, int Y) c) => remote.All(d => visible.All(v =>
+                    !new Rectangle(c.X + d.Left - originX, c.Y + d.Top - originY, d.Width, d.Height).IntersectsWith(new Rectangle(v.p.X, v.p.Y, v.d.Width, v.d.Height))));
+                if (Free(candidate)) at = candidate;
+            }
+            foreach (var d in remote)
+                list.Add(new ScreenPlacement(d.Id, true, at.X + d.Left - originX, at.Y + d.Top - originY,
+                    keepHidden && existing.Any(e => e.Remote && e.Id == d.Id && e.Hidden)));
+        }
+        List<ScreenPlacement> Fresh(bool keepHidden)
+        {
+            var list = local.Select(d => new ScreenPlacement(d.Id, false, d.Left, d.Top)).ToList();
+            AppendRemote(list, keepHidden);
+            return list;
+        }
+        bool Valid(List<ScreenPlacement> list)
+        {
+            try { Build(local, remote, list); return true; } catch (ArgumentException) { return false; }
+        }
+
+        var localKept = existing.Where(p => !p.Remote && local.Any(d => d.Id == p.Id)).Select(p => p with { Hidden = false })
+            .GroupBy(p => p.Id).Select(g => g.First()).ToList();
+        if (localKept.Count != local.Length) return Fresh(keepHidden: true);
+        var remoteKept = existing.Where(p => p.Remote && remote.Any(d => d.Id == p.Id)).GroupBy(p => p.Id).Select(g => g.First()).ToList();
+        var result = new List<ScreenPlacement>(localKept);
+        if (remoteKept.Count == remote.Length) result.AddRange(remoteKept); else AppendRemote(result, keepHidden: true);
+        if (Valid(result)) return result;
+        var fresh = Fresh(keepHidden: true);
+        return Valid(fresh) ? fresh : Fresh(keepHidden: false);
+    }
+
     public static List<ScreenRoute> Build(DisplayInfo[] local, DisplayInfo[] remote, IReadOnlyList<ScreenPlacement> allPositions)
     {
         var hidden = allPositions.Where(p => p.Hidden).Select(p => (p.Id, p.Remote)).ToHashSet();

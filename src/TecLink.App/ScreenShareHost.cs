@@ -106,7 +106,7 @@ internal sealed class ScreenShareHost : IDisposable
         finally { full?.Dispose(); scaled?.Dispose(); }
     }
 
-    private static void DrawCursor(Graphics g, Rectangle bounds)
+    internal static void DrawCursor(Graphics g, Rectangle bounds)
     {
         var info = new Win32.CURSORINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<Win32.CURSORINFO>() };
         if (!Win32.GetCursorInfo(ref info) || info.flags != Win32.CURSOR_SHOWING || info.hCursor == IntPtr.Zero) return;

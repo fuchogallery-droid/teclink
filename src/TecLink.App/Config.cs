@@ -32,6 +32,8 @@ public sealed class AppConfig
     public int PointerSpeedLevel { get; set; }
     public string CursorStyle { get; set; } = "system";
     public int CursorSizePercent { get; set; } = 100;
+    /// <summary>Files shared with the session are copied to this PC's TecLink folder as soon as they are shared.</summary>
+    public bool AutoReceive { get; set; } = true;
 
     private static string ConfigPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TecLink", "config.json");

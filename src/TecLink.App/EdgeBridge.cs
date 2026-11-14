@@ -18,7 +18,7 @@ public enum BridgeMode { Local, Remote }
 /// the peer currently holds it — see <see cref="OnMessageReceived"/>'s handling of
 /// <see cref="MessageType.SwitchToRemote"/> for how that handoff is negotiated.
 /// </summary>
-public sealed class EdgeBridge : IDisposable
+public sealed partial class EdgeBridge : IDisposable
 {
     private readonly AppConfig _config;
     private readonly MouseHook _mouseHook = new();
@@ -140,6 +140,7 @@ public sealed class EdgeBridge : IDisposable
         Files = new FileTransfers(() => _peerExtras ? _connection : null,
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "TecLink"));
         Files.Status += text => StatusChanged?.Invoke(text);
+        InitSuite();
         Files.Received += (items, folder) => ControlChanged?.Invoke($"Recibido de la otra PC: {items} archivo(s) en Descargas\\TecLink");
         CursorStyler.Apply(_config.CursorStyle, _config.CursorSizePercent);
         ApplyWindowsSpeed();
@@ -161,7 +162,9 @@ public sealed class EdgeBridge : IDisposable
         _mouseHook.Swallow = false; _keyboardHook.Swallow = false;
         SwitchToLocal(force: true);
         ReleaseAllRemoteHeldInput(); ReleaseAllInjectedInput();
-        if (wasControlled && _connection is { } peer) _ = peer.SendAsync(WireMessage.SwitchToRemote()); // ask the PC that was controlling this one to let go
+        // Ask the PC that was controlling this one to let go. (Never SwitchToRemote: that would tell it WE are
+        // controlling IT, and both PCs would end up believing the opposite of what is happening.)
+        if (wasControlled && _connection is { } peer) _ = peer.SendAsync(WireMessage.Yield());
         StatusChanged?.Invoke("Mouse y teclado liberados en esta PC.");
     }
 
@@ -382,7 +385,7 @@ public sealed class EdgeBridge : IDisposable
             _peerControlling = false;
             SwitchToLocal(force: true);
             ReleaseAllInjectedInput();
-            _screenHost.Stop();
+            _screenHost.Stop(); _tilesForPeer.Stop();
             ViewerCloseRequested?.Invoke();
         });
     }
@@ -403,6 +406,7 @@ public sealed class EdgeBridge : IDisposable
         _remoteDisplays = Array.Empty<DisplayInfo>();
         _remoteName = "Otra PC"; _remoteKnown = false; _peerMapSupported = false; _peerExtras = false; _peerStatus = "none";
         _spatialValid = false; _spatialLocal = new(); _spatialRemote = new(); _activeRoute = null;
+        ClearSuite();
         if (_config.ScreenPositions.Any(p => p.Remote))
         {
             _config.ScreenPositions = _config.ScreenPositions.Where(p => !p.Remote).ToList();
@@ -541,7 +545,7 @@ public sealed class EdgeBridge : IDisposable
             _remoteKnown = false;
             _peerControlling = false;
             _peerExtras = false;
-            _screenHost.Stop();
+            _screenHost.Stop(); _tilesForPeer.Stop();
             Files.Abort();
             _clipboard.BeginInvoke(() =>
             {
@@ -598,6 +602,12 @@ public sealed class EdgeBridge : IDisposable
         if (msg.Type == MessageType.FileList) { PeerFilesReceived?.Invoke(msg.Text ?? "[]"); return; }
         if (msg.Type == MessageType.FileCommand) { Files.RunCommand(msg.Text ?? ""); return; }
         if (msg.Type == MessageType.ScreenFrame) { ScreenFrameReceived?.Invoke(msg); return; }
+        if (msg.Type == MessageType.ScreenTile)
+        {
+            var shown = _remoteDisplays;
+            if (msg.Index >= 0 && msg.Index < shown.Length) TileReceived?.Invoke(true, shown[msg.Index].Id, msg.Data);
+            return;
+        }
         if (msg.Type == MessageType.ScreenAck) { _screenHost.Ack(); return; }
         if (_clipboard.InvokeRequired)
         {
@@ -624,9 +634,11 @@ public sealed class EdgeBridge : IDisposable
                 }
                 if (_peerExtras && _config.Role == PeerRole.Server)
                     _ = _connection!.SendAsync(WireMessage.Pointer(_config.PointerSpeedLevel, _config.CursorStyle, _config.CursorSizePercent));
-                RefreshSpatialRoutes();
+                // In a session the owner's map rules: it is completed here (every screen placed, edges joined) and
+                // sent to the guest right away, so the mouse crosses without anyone having to press "save".
+                if (_sessionMode && _config.Role == PeerRole.Server) AdoptOwnerMap(); else RefreshSpatialRoutes();
                 if (_peerMapSupported && _config.UseSpatialMap && _spatialValid &&
-                    (_config.Role == PeerRole.Server || !msg.HasSpatialMap))
+                    (_config.Role == PeerRole.Server || (!_sessionMode && !msg.HasSpatialMap)))
                     _ = _connection!.SendAsync(WireMessage.Map(Guid.NewGuid().ToString("N"), _config.ScreenPositions.ToArray()));
                 StatusChanged?.Invoke($"Vinculado con {msg.MachineName} ({_remoteWidth}x{_remoteHeight})");
                 break;
@@ -694,6 +706,16 @@ public sealed class EdgeBridge : IDisposable
                 StatusChanged?.Invoke("La otra PC tomó el mando");
                 ControlChanged?.Invoke("La otra PC tiene el mando");
                 break;
+            case MessageType.Yield:
+                // The other PC wants its own mouse and keyboard back: stop controlling it. Nobody takes control of us.
+                if (_viewInput) { ViewerCloseRequested?.Invoke(); SetViewInput(false); }
+                if (_mode == BridgeMode.Remote) SwitchToLocal();
+                StatusChanged?.Invoke($"{_remoteName} recuperó su mouse y su teclado");
+                break;
+            case MessageType.ScreenRemoval: HandleRemoval(msg.Text ?? ""); break;
+            case MessageType.ScreenWatch: HandleWatch(msg.Text ?? ""); break;
+            case MessageType.ShareOffer: HandleShareOffer(msg.Text ?? ""); break;
+            case MessageType.ShareFetch: HandleShareFetch(msg.Text ?? ""); break;
             case MessageType.SwitchToLocal:
                 _lastLocalPoint = null;
                 _peerControlling = false;
@@ -703,6 +725,13 @@ public sealed class EdgeBridge : IDisposable
                 break;
             case MessageType.SpatialMap:
                 if (!_peerMapSupported) break;
+                if (_sessionMode && _config.Role == PeerRole.Server)
+                {
+                    // Only the owner of the session arranges the screens: a guest's map is refused and the owner's is sent back.
+                    _ = _connection?.SendAsync(WireMessage.MapAck(msg.RequestId ?? "", false, "El orden de las pantallas lo decide el dueño de la sala."));
+                    if (_spatialValid) _ = _connection?.SendAsync(WireMessage.Map(Guid.NewGuid().ToString("N"), _config.ScreenPositions.ToArray()));
+                    break;
+                }
                 try
                 {
                     StoreSpatialMap(msg.Placements.Select(p => p with { Remote = !p.Remote }).ToList(),
@@ -744,8 +773,11 @@ public sealed class EdgeBridge : IDisposable
         if (_viewInput) return; // the remote-screen window owns the mouse; edges stay closed
         if (_mode == BridgeMode.Local)
         {
-            if (_config.UseSpatialMap && _spatialValid && _connection is not null && _remoteKnown && !_peerControlling)
+            if (_config.UseSpatialMap && _spatialValid && _connection is not null && _remoteKnown)
             {
+                // While the other PC drives this one, its moves are injected (and skipped by the hook). The person
+                // sitting here can still use their own mouse and cross to the other PC: that takes the control back.
+                if (_peerControlling) _lastLocalPoint = null;
                 HandleSpatialLocalMove(e);
                 return;
             }
@@ -1013,6 +1045,7 @@ public sealed class EdgeBridge : IDisposable
             pointerSpeed = CurrentSpeedLevel(), cursorStyle = CursorStyler.Normalize(_config.CursorStyle),
             cursorSize = CursorStyler.ClampSize(_config.CursorSizePercent), extras = CanUseExtras,
             transfer = Files.LastStatus, receiveFolder = Files.ReceiveFolder,
+            canArrange = CanArrange, shares = SharesView(), autoReceive = _config.AutoReceive, controlling = _viewInput,
             local = local.OrderBy(d => order.Contains(d.Id) ? order.IndexOf(d.Id) : 1000 + Array.IndexOf(local, d)).Select(d => new
             {
                 id = d.Id, label = "Pantalla " + (Array.IndexOf(local, d) + 1), width = d.Width, height = d.Height,
@@ -1064,7 +1097,7 @@ public sealed class EdgeBridge : IDisposable
         if (_peerControlling && _connection is { } peer)
         {
             _peerControlling = false;
-            _ = peer.SendAsync(WireMessage.SwitchToRemote()); // ask an active remote controller to yield first
+            _ = peer.SendAsync(WireMessage.Yield()); // ask an active remote controller to let go first
         }
         SwitchToLocal(force: true);
         ReleaseAllInjectedInput();
@@ -1078,8 +1111,13 @@ public sealed class EdgeBridge : IDisposable
         {
             SwitchToLocal(force: true);
             _desktop = CaptureDesktop();
-            RefreshSpatialRoutes();
-            if (_connection is { } connection) _ = SendDesktopAsync(connection);
+            var owner = _sessionMode && _config.Role == PeerRole.Server && _remoteKnown;
+            if (owner) AdoptOwnerMap(); else RefreshSpatialRoutes();
+            if (_connection is { } connection)
+            {
+                _ = SendDesktopAsync(connection);
+                if (owner && _peerMapSupported && _spatialValid) _ = connection.SendAsync(WireMessage.Map(Guid.NewGuid().ToString("N"), _config.ScreenPositions.ToArray()));
+            }
         });
     }
 
@@ -1178,7 +1216,7 @@ public sealed class EdgeBridge : IDisposable
     public void Dispose()
     {
         _watchdog?.Dispose();
-        _screenHost.Dispose();
+        _screenHost.Dispose(); _tilesForPeer.Dispose(); _tilesLocal.Dispose();
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         _mouseHook.Dispose();
         _rawMouse.Dispose();
@@ -1241,13 +1279,35 @@ public sealed class EdgeBridge : IDisposable
         _config.Theme = theme is "dark" or "light" ? theme : "system";
         try { _config.Save(); }
         catch { (_config.ScreenPositions, _config.UseSpatialMap, _config.AutomaticSwitching, _config.Theme) = previous; throw; }
-        if (_peerControlling && _connection is { } peer) { _peerControlling = false; _ = peer.SendAsync(WireMessage.SwitchToRemote()); }
+        if (_peerControlling && _connection is { } peer) { _peerControlling = false; _ = peer.SendAsync(WireMessage.Yield()); }
         SwitchToLocal(force: true); ReleaseAllInjectedInput(); _lastLocalPoint = null;
+        RefreshSpatialRoutes();
+    }
+
+    /// <summary>A guest of a session cannot arrange screens: the owner of the session decides and this PC follows.</summary>
+    public bool CanArrange => !(_config.Role == PeerRole.Client && !string.IsNullOrEmpty(_config.JoinCode));
+
+    private void AdoptOwnerMap()
+    {
+        var completed = SpatialMap.Complete(LocalDisplays(), _remoteDisplays, _config.ScreenPositions);
+        if (!_config.UseSpatialMap || !completed.SequenceEqual(_config.ScreenPositions))
+        {
+            _config.ScreenPositions = completed; _config.UseSpatialMap = true;
+            try { _config.Save(); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Logger.LogError(ex); }
+        }
         RefreshSpatialRoutes();
     }
 
     public async Task<string> ApplySpatialMapAsync(List<ScreenPlacement> positions, bool automatic, string theme)
     {
+        if (!CanArrange)
+        {
+            _config.AutomaticSwitching = automatic; _config.Theme = theme is "dark" or "light" ? theme : "system";
+            _config.Save();
+            return "Ajustes guardados. El orden de las pantallas lo decide el dueño de la sala.";
+        }
+        // Removing a guest's screen needs that guest's consent (RequestRemoveScreen): saving the map can only bring screens back.
+        positions = positions.Select(p => p.Hidden && !_config.ScreenPositions.Any(e => e.Id == p.Id && e.Remote == p.Remote && e.Hidden) ? p with { Hidden = false } : p).ToList();
         StoreSpatialMap(positions, automatic, theme);
         if (!_peerMapSupported || _connection is null || !_remoteKnown)
             return "Mapa guardado en esta PC. Actualiza la otra PC para sincronizarlo.";
