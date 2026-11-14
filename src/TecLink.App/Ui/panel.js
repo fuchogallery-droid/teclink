@@ -131,18 +131,23 @@
   // ---- Barra de estado: siempre visible, con un boton grande que cambia segun lo que pasa ----
   function updateStatusBar() {
     const on = state.powered !== false, host = state.role === 'Server', name = state.remoteName || 'la otra PC';
-    let dot = 'off', title = '', sub = '', main = null;
+    let dot = 'off', title = '', sub = '', main = null, alt = null;
+    const idle = state.netMode === 'idle';
     if (!on) { title = 'TecLink está apagado'; sub = 'No comparte mouse ni teclado.'; main = { label: 'Encender', act: () => send({ type: 'setPower', on: true }) }; }
+    else if (idle) { dot = 'off'; title = 'Sin conexión'; sub = 'TecLink no está conectado a nadie. Tú decides cuándo conectar.'; main = { label: 'Invitar a alguien', act: () => { send({ type: 'session', action: 'open' }); document.querySelector('[data-tab=connection]').click(); } }; alt = { label: 'Conectar con un código', act: () => { document.querySelector('[data-tab=connection]').click(); setTimeout(() => $('join-code').focus(), 50); } }; }
     else if (!state.connected) {
       const gone = state.peerStatus === 'left' ? `${name} salió de la sesión` : state.peerStatus === 'lost' ? `${name} se desconectó` : '';
-      if (!host && state.joinCode && !gone) { dot = 'warn'; title = 'Buscando la sesión…'; sub = state.joinNotice || 'La otra PC debe tener TecLink abierto en esta misma red.'; main = { label: 'Cancelar', act: () => send({ type: 'session', action: 'host' }) }; }
-      else { dot = gone ? 'bad' : 'off'; title = gone || 'Sin conexión'; sub = `Tu código: ${state.sessionCode || '—'}. Escríbelo en la otra PC, o conéctate al código de la otra.`; main = { label: 'Conectar a otra PC', act: () => { document.querySelector('[data-tab=connection]').click(); setTimeout(() => $('join-code').focus(), 50); } }; }
+      if (!host && state.joinCode && !gone) { dot = 'warn'; title = 'Buscando la sesión…'; sub = state.joinNotice || 'La otra PC debe tener TecLink abierto en esta misma red.'; main = { label: 'Cancelar', act: () => send({ type: 'session', action: 'stop' }) }; }
+      else { dot = gone ? 'bad' : 'ok'; title = gone || 'Sesión abierta: esperando a la otra PC'; sub = `Tu código: ${state.sessionCode || '—'}. Escríbelo en la otra PC.`; main = { label: 'Cerrar mi sesión', act: () => send({ type: 'session', action: 'stop' }) }; }
     } else if (state.mode === 'remote') { dot = 'live'; title = `Controlando a ${name}`; sub = 'Tu mouse y tu teclado están en la otra PC.'; main = { label: 'Volver a esta PC', act: () => send({ type: 'toggleControl' }) }; }
     else if (state.mode === 'peer') { dot = 'live'; title = `${name} tiene el mouse`; sub = 'La otra PC está manejando esta.'; main = { label: 'Recuperar mi mouse', act: () => send({ type: 'freeInput' }) }; }
     else if (state.sessionMode && !state.management) { dot = 'warn'; title = `Conectado con ${name}: el mouse NO pasa todavía`; sub = host ? 'Activa la gestión de pantallas para mover el mouse entre las dos PCs.' : 'El anfitrión debe activar la gestión de pantallas.'; main = host ? { label: 'Activar gestión', act: () => send({ type: 'setManagement', on: true }) } : null; }
     else { dot = 'ok'; title = `Conectado con ${name}`; sub = 'Lleva el mouse al borde de la pantalla, o pulsa el botón, para pasar a la otra PC.'; main = { label: `Pasar el mouse a ${name}`, act: () => send({ type: 'toggleControl' }) }; }
     $('sb-dot').className = 'sb-dot ' + dot; $('sb-title').textContent = title; $('sb-sub').textContent = sub;
     const b = $('sb-main'); b.hidden = !main; if (main) { b.textContent = main.label; b.onclick = main.act; }
+    if (!alt && !idle && on) alt = { label: host ? 'Cerrar mi sesión' : 'Salir de la sesión', act: () => send({ type: 'session', action: 'stop' }) };
+    if (alt && main && (alt.label === main.label || main.label === 'Cancelar')) alt = null;
+    const a = $('sb-alt'); a.hidden = !alt; if (alt) { a.textContent = alt.label; a.onclick = alt.act; }
   }
   $('sb-free').onclick = () => { send({ type: 'freeInput' }); toast('Mouse y teclado liberados en esta PC.'); };
   // ---- Salida de la otra PC: aviso y suite vacia ----
@@ -181,11 +186,13 @@
     $('session-code').textContent = state.sessionCode || '——';
     $('host-card').classList.toggle('inactive', !host);
     const guest = !host && !legacy;
-    $('host-status').textContent = legacy ? 'Ahora usas un enlace directo por IP. Pulsa «Abrir mi propia sesión» para invitar con código.' : guest ? 'Estás unido a otra sesión. Sal de ella para invitar a alguien.' : state.connected ? `${state.remoteName || 'Otra PC'} está conectada a tu sesión.` : 'Esperando a que alguien se una con este código.';
+    const active = state.netMode === 'host', idleNet = state.netMode === 'idle';
+    $('open-session').hidden = !(host && idleNet); $('close-session').hidden = !(host && active); $('copy-code').className = (host && active) ? 'primary' : 'secondary';
+    $('host-status').textContent = idleNet && host ? 'Tu sesión está cerrada: nadie puede conectarse a esta PC. Ábrela cuando quieras invitar a alguien.' : legacy ? 'Ahora usas un enlace directo por IP. Pulsa «Abrir mi propia sesión» para invitar con código.' : guest ? 'Estás unido a otra sesión. Sal de ella para invitar a alguien.' : state.connected ? `${state.remoteName || 'Otra PC'} está conectada a tu sesión.` : 'Esperando a que alguien se una con este código.';
     $('host-card').classList.toggle('inactive', !host);
     const addrs = state.addresses || [];
-    $('host-address').textContent = addrs.length ? `Dirección de esta PC (por si la otra no la encuentra sola): ${addrs.join(' · ')}` : '';
-    $('firewall-box').hidden = state.firewall !== false || !host;
+    $('host-address').textContent = addrs.length && active ? `Dirección de esta PC (por si la otra no la encuentra sola): ${addrs.join(' · ')}` : '';
+    $('firewall-box').hidden = state.firewall !== false || !(host && active);
     if (document.activeElement !== $('join-address') && !$('join-address').value && state.peerAddress) $('join-address').value = state.peerAddress;
     if (document.activeElement !== $('join-code') && guest) $('join-code').value = state.joinCode || '';
     $('leave-btn').hidden = host; $('leave-btn').textContent = legacy ? 'Abrir mi propia sesión' : 'Salir de la sesión';
@@ -216,7 +223,9 @@
   $('diag-run').onclick = () => { $('diag-run').disabled = true; $('diag-run').textContent = 'Probando…'; $('diag-out').hidden = false; $('diag-out').textContent = 'Revisando la red…'; send({ type: 'diagnose' }); };
   $('diag-copy').onclick = async () => { try { await navigator.clipboard.writeText($('diag-out').textContent); toast('Informe copiado. Pégalo donde te lo pidan.'); } catch { toast('Selecciona el texto del informe y cópialo.'); } };
   $('firewall-btn').onclick = () => { send({ type: 'session', action: 'firewall' }); toast('Windows te pedirá permiso: pulsa Sí.'); };
-  $('leave-btn').onclick = () => send({ type: 'session', action: 'host' });
+  $('leave-btn').onclick = () => send({ type: 'session', action: 'stop' });
+  $('open-session').onclick = () => send({ type: 'session', action: 'open' });
+  $('close-session').onclick = () => send({ type: 'session', action: 'stop' });
   let pointerBusy = false, pointerTimer, chosenStyle = 'system';
   function sendPointer() {
     pointerBusy = true; clearTimeout(pointerTimer);
@@ -290,7 +299,7 @@
   window.__tecTest = { receive, draft: () => structuredClone(draft), select: key => { selected = key; update(); } };
   if (preview) {
     window.__tecMessages = [];
-    receive({ type: 'state', state: { machineName: 'JENAV', remoteName: 'RAFAEL', peerStatus: 'connected', connected: true, mode: 'local', role: 'Server', sessionCode: 'K7M-4QX', joinCode: '', management: false, maxScreens: 10, host: '192.168.12.183', port: 51777, status: 'Conexión por red local', extras: true, pointerSpeed: 10, cursorStyle: 'green', cursorSize: 150, transfer: '', receiveFolder: 'C:\\Users\\jenav\\Downloads\\TecLink', automatic: true, theme: 'dark', peerMapSupported: true, spatialEnabled: true,
+    receive({ type: 'state', state: { machineName: 'JENAV', remoteName: 'RAFAEL', peerStatus: 'connected', netMode: 'host', connected: true, mode: 'local', role: 'Server', sessionCode: 'K7M-4QX', joinCode: '', management: false, maxScreens: 10, host: '192.168.12.183', port: 51777, status: 'Conexión por red local', extras: true, pointerSpeed: 10, cursorStyle: 'green', cursorSize: 150, transfer: '', receiveFolder: 'C:\\Users\\jenav\\Downloads\\TecLink', automatic: true, theme: 'dark', peerMapSupported: true, spatialEnabled: true,
       local: [{ id: 'screen1', label: 'Pantalla 1', primary: true, left: 0, top: 0, width: 2240, height: 1400 }, { id: 'screen2', label: 'Pantalla 2 · HDMI', left: -1600, top: -2160, width: 3840, height: 2160 }], remote: [{ id: 'screen1', label: 'Pantalla 1', left: 0, top: 0, width: 1920, height: 1080 }], placements: [{ id: 'screen1', remote: false, x: 0, y: 0 }, { id: 'screen2', remote: false, x: -1600, y: -2160 }, { id: 'screen1', remote: true, x: -1920, y: 0 }] } });
   } else { window.chrome?.webview?.addEventListener('message', e => receive(e.data)); send({ type: 'ready' }); }
 })();

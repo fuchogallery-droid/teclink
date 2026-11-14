@@ -112,6 +112,9 @@ public sealed class EdgeBridge : IDisposable
     private readonly Dictionary<int, (int ScanCode, bool Extended)> _sentHeldKeys = new();
     private readonly HashSet<MouseButtonKind> _sentHeldButtons = new();
 
+    /// <summary>False until the user opens a session or joins one. TecLink starts with NO connection of any kind.</summary>
+    public volatile bool NetworkActive;
+
     /// <summary>Master power switch state (tray menu / panel). Off = no connection, no hotkey handoff.</summary>
     public bool Powered { get; set; } = true;
 
@@ -1002,6 +1005,7 @@ public sealed class EdgeBridge : IDisposable
             placements = _config.ScreenPositions, spatialEnabled = _config.UseSpatialMap, peerMapSupported = _peerMapSupported,
             host = _config.PeerHost, port = _config.Port, role = _config.Role.ToString(),
             peerStatus = _peerStatus,
+            netMode = !NetworkActive ? "idle" : _config.Role == PeerRole.Server ? "host" : "guest",
             sessionCode = SessionDiscovery.Pretty(SessionDiscovery.Normalize(_config.SessionCode) ?? ""),
             joinCode = SessionDiscovery.Pretty(SessionDiscovery.Normalize(_config.JoinCode) ?? ""),
             sessionMode = _sessionMode, management = _management, joinNotice = _joinNotice, maxScreens = MaxScreens,

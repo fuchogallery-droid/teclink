@@ -1,5 +1,5 @@
 ; TecLink: instalador por usuario (no pide permisos de administrador).
-#define AppVer "0.6.4"
+#define AppVer "0.6.5"
 #ifndef Src
   #define Src "..\publish"
 #endif

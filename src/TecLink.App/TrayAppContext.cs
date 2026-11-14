@@ -9,7 +9,7 @@ public sealed class TrayAppContext : ApplicationContext
     private readonly CancellationTokenSource _cts = new();
     private ControlPanelForm? _panel;
     private RemoteScreenForm? _viewer;
-    private string _status = "Iniciando conexión…";
+    private string _status = "Sin conexión";
     private RegisteredWaitHandle? _showRequest;
 
     /// <summary>The TecLink isotype, baked into the exe via ApplicationIcon; read from the
@@ -53,8 +53,8 @@ public sealed class TrayAppContext : ApplicationContext
         _powerItem.Click += (_, _) => SetPower(!_bridge.Powered);
         menu.Items.Insert(0, _powerItem);
 
+        // No network at all until the user opens a session or joins one.
         _bridge.InstallHooks();
-        StartNetworking();
         _clipboard.BeginInvoke(ShowPanel);
     }
 
@@ -63,8 +63,18 @@ public sealed class TrayAppContext : ApplicationContext
 
     private Task _netTask = Task.CompletedTask;
 
+    private void StopNetworking()
+    {
+        _netCts?.Cancel(); _netCts = null;
+        _bridge.NetworkActive = false;
+        _bridge.ClearRemote();
+        OnStatusChanged("Sin conexión");
+        _panel?.RefreshState();
+    }
+
     private void StartNetworking()
     {
+        _bridge.NetworkActive = true;
         _netCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
         _netTask = _bridge.RunNetworkingAsync(_netCts.Token).ContinueWith(
             t => { if (t.Exception!.InnerExceptions.Any(e => e is not OperationCanceledException)) Logger.LogError(t.Exception); },
@@ -83,10 +93,11 @@ public sealed class TrayAppContext : ApplicationContext
     private void Session(string action, string? code, string? address)
     {
         if (action == "firewall") { _ = Task.Run(_bridge.AllowFirewall); return; }
-        if (action == "join") { _bridge.JoinSession(code, address); } else _bridge.StartHosting();
+        if (action == "join") _bridge.JoinSession(code, address); else _bridge.StartHosting();
         _bridge.AnnounceLeave();  // whoever was on the other end sees "left", not "link lost"
         _bridge.ClearRemote();    // and this PC starts from an empty suite
-        RestartNetworking();
+        if (action == "open" || action == "join") RestartNetworking();
+        else StopNetworking();    // "stop": back to no connection at all
     }
 
     /// <summary>Master on/off: off hands control back locally, drops the connection and stops
@@ -97,8 +108,8 @@ public sealed class TrayAppContext : ApplicationContext
         if (!on) _bridge.AnnounceLeave();
         _bridge.Powered = on;
         _powerItem.Checked = on;
-        if (on) { CursorStyler.Apply(_config.CursorStyle, _config.CursorSizePercent); StartNetworking(); }
-        else { _netCts?.Cancel(); _netCts = null; _bridge.ClearRemote(); CursorStyler.Restore(); }
+        if (on) CursorStyler.Apply(_config.CursorStyle, _config.CursorSizePercent); // stays disconnected: the user decides when to connect
+        else { StopNetworking(); CursorStyler.Restore(); }
         OnControlChanged(on ? "TecLink encendido" : "TecLink apagado");
         _panel?.RefreshState();
     }
