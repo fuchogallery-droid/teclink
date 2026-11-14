@@ -162,7 +162,7 @@ var placements = new[] { new ScreenPlacement("a", false, 0, 0), new ScreenPlacem
 var spatial = SpatialMap.Build(mapLocal, mapRemote, placements);
 Check(spatial.Count == 3, "Three monitor map contains local seams and remote exits");
 var toPeer = SpatialNavigation.Find(mapLocal[0], new Point(998, 400), new Point(999, 400), spatial, mapLocal, mapRemote);
-Check(toPeer is { Route.TargetRemote: true } && toPeer.Position == new Point(1, 400), "Right edge enters peer left with inward offset");
+Check(toPeer is { Route.TargetRemote: true } && toPeer.Position == new Point(SpatialNavigation.LandingInset, 400), "Right edge enters the other PC a little inside its edge");
 var toHdmi = SpatialNavigation.Find(mapLocal[0], new Point(1, 400), new Point(0, 400), spatial, mapLocal, mapRemote);
 Check(toHdmi is { Route.TargetRemote: false } && toHdmi.Position == new Point(-2, 400), "Local HDMI follows virtual map");
 var mirror = placements.Select(p => p with { Remote = !p.Remote }).ToArray();
@@ -175,7 +175,7 @@ Check(!SpatialMap.Build(mapLocal, mapRemote, corner).Any(r => r.TargetRemote), "
 var partial = placements.Select(p => p.Id == "b" ? p with { Y = 400 } : p).ToArray();
 var partialRoutes = SpatialMap.Build(mapLocal, mapRemote, partial);
 Check(SpatialNavigation.Find(mapLocal[0], new Point(998, 100), new Point(999, 100), partialRoutes, mapLocal, mapRemote) is null, "Noncontact edge segment remains closed");
-Check(SpatialNavigation.Find(mapLocal[0], new Point(998, 600), new Point(999, 600), partialRoutes, mapLocal, mapRemote)?.Position == new Point(1, 200), "Partial seam preserves global alignment");
+Check(SpatialNavigation.Find(mapLocal[0], new Point(998, 600), new Point(999, 600), partialRoutes, mapLocal, mapRemote)?.Position == new Point(SpatialNavigation.LandingInset, 200), "Partial seam preserves global alignment");
 try { SpatialMap.Build(mapLocal, mapRemote, placements.Select(p => p.Id == "b" ? p with { X = 500 } : p).ToArray()); Check(false, "Overlap rejected"); } catch (ArgumentException) { Check(true, "Overlap rejected"); }
 try { SpatialMap.Build(mapLocal, mapRemote, placements.Take(2).ToArray()); Check(false, "Missing screen rejected"); } catch (ArgumentException) { Check(true, "Missing screen rejected"); }
 var mapWire = WireMessage.Decode(WireMessage.Map("request", placements).Encode());
@@ -413,7 +413,8 @@ finally { try { Directory.Delete(work, true); } catch (IOException) { } }
         var routesGuest = SpatialMap.Build(guestScreens, hostScreens, map.Select(p => p with { Remote = !p.Remote }).ToArray());
         // owner -> guest: leave the right edge of the owner's main monitor
         var toGuest = SpatialNavigation.Find(hostScreens[0], new Point(2239, 700), new Point(2240, 700), routesHost, hostScreens, guestScreens);
-        Check(toGuest is { Route.TargetRemote: true } && toGuest.Position.X <= 1, "Mouse crosses from the owner's right edge into the guest's screen");
+        Check(toGuest is { Route.TargetRemote: true } && toGuest.Position.X <= SpatialNavigation.LandingInset + 1, "Mouse crosses from the owner's right edge into the guest's screen");
+        Check(toGuest is not null && SpatialNavigation.Find(guestScreens[0], toGuest.Position, new Point(toGuest.Position.X - 1, toGuest.Position.Y), routesGuest, guestScreens, hostScreens) is null, "A 1 px jitter right after crossing does not bounce control straight back");
         // guest -> owner: leave the left edge of the guest's screen
         var toHost = SpatialNavigation.Find(guestScreens[0], new Point(0, 500), new Point(-1, 500), routesGuest, guestScreens, hostScreens);
         Check(toHost is { Route.TargetRemote: true } && toHost.Target.Id == hostScreens[0].Id, "Mouse comes back from the guest's left edge to the owner's main screen");

@@ -799,6 +799,11 @@ public sealed partial class EdgeBridge : IDisposable
         }
     }
 
+    // After control changes hands the edge ignores the mouse for a moment, so a jittery hand cannot bounce control back and forth.
+    private long _crossedAt;
+    private bool Cooling() => Environment.TickCount64 - Interlocked.Read(ref _crossedAt) < 350;
+    private void MarkCrossing() => Interlocked.Exchange(ref _crossedAt, Environment.TickCount64);
+
     private void OnRawMouseMove(int dx, int dy)
     {
         if (_mode == BridgeMode.Remote && _connection is { } connection && _remotePointer is { } pointer)
@@ -812,7 +817,7 @@ public sealed partial class EdgeBridge : IDisposable
                 if (source is not null)
                 {
                     var transition = SpatialNavigation.Find(source, previous, target, _spatialRemote, _remoteDisplays, LocalDisplays());
-                    if (transition is not null && (!transition.Route.TargetRemote || _config.AutomaticSwitching))
+                    if (transition is not null && !Cooling() && (!transition.Route.TargetRemote || _config.AutomaticSwitching))
                     {
                         if (transition.Route.TargetRemote)
                         {
@@ -934,6 +939,7 @@ public sealed partial class EdgeBridge : IDisposable
             return;
         }
         _peerControlling = false;
+        MarkCrossing();
         _speed.Reset();
         _mode = BridgeMode.Remote;
         _anchorX = anchorX;
@@ -958,6 +964,7 @@ public sealed partial class EdgeBridge : IDisposable
     {
         if (_mode == BridgeMode.Local && !force) return;
         var wasRemote = _mode == BridgeMode.Remote;
+        if (wasRemote) MarkCrossing();
         _mode = BridgeMode.Local;
         _remotePointer = null;
         _activeRoute = null;
@@ -1235,7 +1242,7 @@ public sealed partial class EdgeBridge : IDisposable
         var source = local.FirstOrDefault(d => d.Bounds.Contains(previous)) ?? local.FirstOrDefault(d => d.Bounds.Contains(candidate));
         if (source is null) { _lastLocalPoint = candidate; return; }
         var transition = SpatialNavigation.Find(source, previous, candidate, _spatialLocal, local, _remoteDisplays);
-        if (transition is not null && (!transition.Route.TargetRemote || (_config.AutomaticSwitching && ManagementAllowed)))
+        if (transition is not null && !Cooling() && (!transition.Route.TargetRemote || (_config.AutomaticSwitching && ManagementAllowed)))
         {
             e.Suppress = true;
             if (transition.Route.TargetRemote)

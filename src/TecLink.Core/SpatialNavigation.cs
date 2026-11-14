@@ -5,6 +5,10 @@ namespace TecLink.Core;
 public sealed record ScreenTransition(ScreenRoute Route, DisplayInfo Target, Point Position);
 public static class SpatialNavigation
 {
+    /// <summary>The cursor lands this many pixels inside the new screen, not on its very edge: on the edge the smallest jitter
+    /// of the hand would send it straight back and the two PCs would keep swapping control.</summary>
+    public const int LandingInset = 24;
+
     public static ScreenTransition? Find(DisplayInfo source, Point previous, Point candidate,
         IEnumerable<ScreenRoute> routes, DisplayInfo[] sameHost, DisplayInfo[] otherHost)
     {
@@ -24,13 +28,14 @@ public static class SpatialNavigation
                 ? target.Top + (int)Math.Round(targetFraction * (target.Height - 1))
                 : target.Left + (int)Math.Round(targetFraction * (target.Width - 1));
             var position = ScreenRouting.OnEdge(target.Bounds, route.Entry, targetAlong);
-            var excess = side switch
+            var travelled = side switch
             {
                 ScreenEdge.Left => Math.Max(1, source.Left - candidate.X),
                 ScreenEdge.Right => Math.Max(1, candidate.X - (source.Left + source.Width - 1)),
                 ScreenEdge.Top => Math.Max(1, source.Top - candidate.Y),
                 _ => Math.Max(1, candidate.Y - (source.Top + source.Height - 1)),
             };
+            var excess = route.TargetRemote ? Math.Max(LandingInset, travelled) : travelled; // only between PCs; a seam between this PC's own monitors stays continuous
             position = route.Entry switch
             {
                 ScreenEdge.Left => position with { X = position.X + excess },
