@@ -100,8 +100,13 @@ public sealed class PeerConnection : IAsyncDisposable
                     // At most 250 mouse updates/s, retaining the latest position
                     // instead of accumulating seconds of stale motion on Wi-Fi.
                     var remaining = _nextMouseSend - Stopwatch.GetTimestamp();
+                    // Waited with a short spin instead of Task.Delay: Windows rounds timers to ~15 ms, and raising the
+                    // system timer resolution would change the whole PC. The wait is at most 4 ms and only while the mouse moves.
                     if (mouse && remaining > 0)
-                        await Task.Delay(TimeSpan.FromSeconds((double)remaining / Stopwatch.Frequency), _cts.Token);
+                    {
+                        var until = Stopwatch.GetTimestamp() + remaining;
+                        while (Stopwatch.GetTimestamp() < until && !_cts.IsCancellationRequested) Thread.Yield();
+                    }
                     lock (_queueLock)
                     {
                         if (_outbound.First is null) break;

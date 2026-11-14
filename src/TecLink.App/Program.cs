@@ -4,9 +4,6 @@ namespace TecLink.App;
 
 internal static class Program
 {
-    [System.Runtime.InteropServices.DllImport("winmm.dll")]
-    private static extern uint timeBeginPeriod(uint milliseconds);
-
     [STAThread]
     private static void Main()
     {
@@ -26,8 +23,6 @@ internal static class Program
         System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (_, e) => { Logger.LogError(e.Exception); e.SetObserved(); };
         Application.ThreadException += (_, e) => Logger.LogError(e.Exception);
 
-        // Windows rounds timers to ~15 ms by default, which capped the pointer and the screen stream at ~60 updates a second.
-        timeBeginPeriod(1);
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
