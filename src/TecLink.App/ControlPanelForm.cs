@@ -140,6 +140,9 @@ public sealed class ControlPanelForm : Form
                 case "shareAction": _bridge.ShareAction(root.GetProperty("id").GetString() ?? "", root.GetProperty("action").GetString() ?? ""); RefreshState(); break;
                 case "autoReceive": _bridge.SetAutoReceive(root.GetProperty("on").GetBoolean()); RefreshState(); break;
                 case "watch":
+                    // The panel never appears inside the live pictures: without this, a tile of the screen that holds this very
+                    // window shows the window showing the tile showing the window... (an endless tunnel, and a blurry one).
+                    if (IsHandleCreated) TecLink.App.Native.Win32.SetWindowDisplayAffinity(Handle, root.GetProperty("on").GetBoolean() ? TecLink.App.Native.Win32.WDA_EXCLUDEFROMCAPTURE : TecLink.App.Native.Win32.WDA_NONE);
                     _bridge.WatchScreens(root.GetProperty("on").GetBoolean(), root.TryGetProperty("width", out var width) ? width.GetInt32() : 480,
                         root.TryGetProperty("focusRemote", out var fr) && fr.ValueKind is JsonValueKind.True or JsonValueKind.False ? fr.GetBoolean() : null,
                         root.TryGetProperty("focusId", out var fid) ? fid.GetString() : null);

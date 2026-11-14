@@ -18,7 +18,7 @@ internal sealed class ScreenTiles : IDisposable
     {
         Stop();
         var cts = _cts = new CancellationTokenSource();
-        maxWidth = Math.Clamp(maxWidth, 160, 1920);
+        maxWidth = Math.Clamp(maxWidth, 160, 2560);
         _ = Task.Run(() => RunAsync(indices, maxWidth, sink, cts.Token));
     }
 
@@ -34,7 +34,9 @@ internal sealed class ScreenTiles : IDisposable
     {
         var hashes = new Dictionary<int, (ulong Hash, long At)>();
         using var parameters = new EncoderParameters(1);
-        parameters.Param[0] = new EncoderParameter(Encoder.Quality, maxWidth > 900 ? 62L : 55L);
+        // Text must stay readable: a good quality, and the picture is only shrunk as much as the card really needs.
+        parameters.Param[0] = new EncoderParameter(Encoder.Quality, maxWidth > 1200 ? 78L : 82L);
+        var interval = maxWidth > 1500 ? 380 : maxWidth > 900 ? 300 : 240;
         try
         {
             while (!ct.IsCancellationRequested)
@@ -60,7 +62,7 @@ internal sealed class ScreenTiles : IDisposable
                         using var small = new Bitmap(size.Width, size.Height, PixelFormat.Format32bppRgb);
                         using (var g = Graphics.FromImage(small))
                         {
-                            g.InterpolationMode = InterpolationMode.Bilinear; g.PixelOffsetMode = PixelOffsetMode.Half;
+                            g.InterpolationMode = InterpolationMode.HighQualityBicubic; g.PixelOffsetMode = PixelOffsetMode.HighQuality; g.SmoothingMode = SmoothingMode.HighQuality;
                             g.DrawImage(full, new Rectangle(Point.Empty, size));
                         }
                         using var stream = new MemoryStream();
@@ -78,7 +80,7 @@ internal sealed class ScreenTiles : IDisposable
                     hashes[index] = (hash, now);
                     await sink(index, jpeg);
                 }
-                var wait = 280 - (int)(Environment.TickCount64 - started);
+                var wait = interval - (int)(Environment.TickCount64 - started);
                 await Task.Delay(Math.Max(40, wait), ct);
             }
         }

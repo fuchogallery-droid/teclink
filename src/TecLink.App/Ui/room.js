@@ -231,6 +231,12 @@
     document.querySelectorAll('[data-cam-switch]').forEach(b => { b.setAttribute('aria-pressed', cam.on); b.classList.toggle('on', cam.on); const l = b.querySelector('span'); if (l) l.textContent = cam.on ? 'Cámara encendida' : 'Cámara'; });
     const hidden = state ? screens().filter(i => layout()[i.key]?.hidden).length : 0;
     $('room-show').hidden = !hidden; $('room-show').textContent = `Mostrar ocultas (${hidden})`;
+    // Cada pantalla oculta queda a la vista como un boton para volver a mostrarla: nada desaparece sin dejar rastro.
+    const chips = $('room-hidden'), names = state ? screens().filter(i => layout()[i.key]?.hidden).map(i => ({ key: i.key, text: `${i.pc} · Pantalla ${i.n}` })) : [], chipSig = names.map(n => n.key).join('|');
+    if (chips.dataset.sig !== chipSig) {
+      chips.dataset.sig = chipSig; chips.hidden = !names.length; chips.replaceChildren(Object.assign(document.createElement('span'), { textContent: 'Ocultas:' }));
+      for (const n of names) { const b = document.createElement('button'); b.className = 'secondary'; b.type = 'button'; b.textContent = 'Mostrar ' + n.text; b.onclick = () => { delete layout()[n.key].hidden; save(); signature = ''; render(); }; chips.append(b); }
+    }
     $('room-lock').setAttribute('aria-pressed', store.locked); $('room-lock').querySelector('span').textContent = store.locked ? 'Fijas: toca para liberar' : 'Fijar tarjetas';
     document.querySelectorAll('[data-cols]').forEach(b => b.setAttribute('aria-pressed', String(store.cols) === b.dataset.cols));
   }
@@ -240,7 +246,10 @@
     if (!state) return;
     const want = active && !document.hidden;
     const focus = want && full ? screens().find(i => i.key === full) : null;
-    const message = want ? { type: 'watch', on: true, width: focus ? 1600 : 520, ...(focus ? { focusRemote: focus.remote, focusId: focus.screen.id } : {}) } : { type: 'watch', on: false };
+    // La imagen se pide tan grande como la tarjeta la muestra (en pixeles reales de la pantalla), para que el texto se lea nitido.
+    const cards = [...room().querySelectorAll('.room-card.screen')].filter(n => n.offsetWidth), widest = Math.max(0, ...(focus ? cards.filter(n => n.dataset.key === focus.key) : cards).map(n => n.querySelector('.rc-view')?.clientWidth || n.offsetWidth));
+    const need = Math.ceil(widest * (devicePixelRatio || 1)), width = [480, 720, 960, 1280, 1600, 1920, 2560].find(w => w >= need) || 2560;
+    const message = want ? { type: 'watch', on: true, width, ...(focus ? { focusRemote: focus.remote, focusId: focus.screen.id } : {}) } : { type: 'watch', on: false };
     const sig = JSON.stringify(message) + '|' + canSee() + '|' + (state.remote || []).length + '|' + (state.local || []).length;
     if (sig === lastWatch) return; lastWatch = sig; api.send(message);
   }

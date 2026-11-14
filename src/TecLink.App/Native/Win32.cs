@@ -199,6 +199,11 @@ internal static class Win32
         public IntPtr hbmMask, hbmColor;
     }
 
+    /// <summary>WDA_EXCLUDEFROMCAPTURE (Windows 10 2004+): the window stays visible to its user but screen captures see what is behind it.</summary>
+    [DllImport("user32.dll")]
+    public static extern bool SetWindowDisplayAffinity(IntPtr hwnd, uint affinity);
+    public const uint WDA_NONE = 0, WDA_EXCLUDEFROMCAPTURE = 0x11;
+
     [DllImport("user32.dll")]
     public static extern bool GetCursorInfo(ref CURSORINFO info);
 

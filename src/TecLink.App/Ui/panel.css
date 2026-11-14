@@ -244,3 +244,8 @@ details.chat-voice[open]{display:flex;flex-direction:column;gap:8px;max-height:4
 #consent{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:81;width:min(460px,calc(100vw - 32px));padding:20px;border:1px solid var(--red);border-radius:14px;background:var(--panel);display:flex;flex-direction:column;gap:14px;box-shadow:0 20px 60px rgba(0,0,0,.6)}
 #consent .file-actions{justify-content:flex-end}
 #toast{z-index:90}
+
+.room-hidden{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px;color:var(--muted)}
+.room-hidden button{min-height:40px}
+.rc-img{image-rendering:auto}
+.rc-view{background:#050505}
