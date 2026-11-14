@@ -69,7 +69,7 @@
     if (!state) return;
     for (const s of rects()) {
       const node = [...$('map-nodes').children].find(n => n.dataset.key === M.key(s));
-      if (node) { Object.assign(node.style, { left: `${s.x * view.scale + view.x}px`, top: `${s.y * view.scale + view.y}px`, width: `${s.width * view.scale}px`, height: `${s.height * view.scale}px` }); node.classList.toggle('selected', M.key(s) === selected); node.setAttribute('aria-pressed', M.key(s) === selected ? 'true' : 'false'); }
+      if (node) { node.classList.toggle('offline', !!s.remote && !state.connected); Object.assign(node.style, { left: `${s.x * view.scale + view.x}px`, top: `${s.y * view.scale + view.y}px`, width: `${s.width * view.scale}px`, height: `${s.height * view.scale}px` }); node.classList.toggle('selected', M.key(s) === selected); node.setAttribute('aria-pressed', M.key(s) === selected ? 'true' : 'false'); }
     }
     $('map-links').replaceChildren();
     M.contacts(rects()).forEach(c => {
@@ -98,15 +98,17 @@
     $('routes-list').replaceChildren();
     contacts.filter(c => M.key(c.a) === selected || M.key(c.b) === selected).forEach(c => { const first = M.key(c.a) === selected, target = first ? c.b : c.a, side = first ? c.side : opposite[c.side], li = document.createElement('li'); li.textContent = `${names[side]} ↔ ${names[opposite[side]]} · ${target.remote ? state.remoteName || 'Otra PC' : 'Esta PC'} / ${target.label || 'Pantalla'}`; $('routes-list').append(li); });
     if (!$('routes-list').children.length) { const li = document.createElement('li'); li.textContent = 'Sin bordes unidos.'; $('routes-list').append(li); }
-    const removed = draft.placements.filter(p => p.hidden).length;
-    $('restore-screens').hidden = !removed; $('restore-screens').textContent = `Restaurar pantallas quitadas (${removed})`;
-    $('remove-screen').disabled = !s || saving || rects().length <= 1; $('remove-screen').textContent = removeArmed === selected ? '¿Seguro? Pulsa otra vez' : 'Quitar esta pantalla';
+    const removed = draft.placements.filter(p => p.hidden).length, admin = state.role === 'Server';
+    $('restore-screens').hidden = !removed || !admin; $('restore-screens').textContent = `Restaurar pantallas quitadas (${removed})`;
+    $('remove-screen').disabled = !(admin && s && s.remote) || saving || rects().length <= 1;
+    $('remove-note').textContent = !admin ? 'Solo el anfitrión de la sesión puede quitar pantallas.' : s && !s.remote ? 'Las pantallas propias no se pueden quitar: solo las de invitados.' : ''; $('remove-screen').textContent = removeArmed === selected ? '¿Seguro? Pulsa otra vez' : 'Quitar esta pantalla';
     TecRoom.render(state); TecChat.render(state);
     $('save').disabled = saving || overlaps; $('save').textContent = saving ? 'Guardando…' : dirty ? 'Guardar mapa' : 'Mapa guardado';
     $('save-heading').textContent = dirty ? 'Cambios sin guardar' : 'Mapa actual'; $('save-message').textContent = saving ? 'Esperando confirmación…' : 'Los cambios se aplican al guardar.';
     ['theme', 'automatic', 'reset-map', 'position-x', 'position-y'].forEach(id => $(id).disabled = saving);
     document.querySelectorAll('[data-dx]').forEach(b => b.disabled = saving);
     for (const [id, value] of Object.entries({ 'connection-title': state.connected ? 'Tus equipos están conectados' : 'Esperando conexión', 'detail-name': state.machineName, 'detail-remote': state.remoteName || '—', 'detail-role': state.role === 'Server' ? 'Anfitrión de la sesión' : state.joinCode ? 'Invitado' : 'Enlace directo por IP', 'detail-host': state.host, 'detail-port': state.port, 'detail-status': state.status })) $(id).textContent = value;
+    peerChanges();
     updateSession();
     const extras = !!state.extras, level = state.pointerSpeed || 10, size = state.cursorSize || 100, style = state.cursorStyle || 'system';
     if (!pointerBusy) { $('speed').value = level; $('cursor-size').value = size; chosenStyle = style; }
@@ -123,6 +125,18 @@
     $('transfer-status').textContent = state.transfer || 'Sin envíos todavía.';
     if (state.receiveFolder) $('receive-folder').textContent = state.receiveFolder;
     draw();
+  }
+  // ---- Salida de la otra PC: aviso y suite vacia ----
+  let lastPeer;
+  function peerChanges() {
+    const now = state.peerStatus || 'none', name = state.remoteName || 'La otra PC';
+    if (lastPeer === undefined) { lastPeer = now; return; }
+    if (now === lastPeer) return;
+    if (now === 'left') { toast(name + ' salió de la sesión.'); TecChat.system(name + ' salió de la sesión.'); }
+    else if (now === 'lost') { toast(name + ' se desconectó.'); TecChat.system(name + ' se desconectó.'); }
+    else if (now === 'connected') TecChat.system(name + ' se conectó.');
+    else if (now === 'none') TecChat.reset();
+    lastPeer = now;
   }
   // ---- Archivos compartidos: lista de cada PC con acciones ----
   let lastTransfer = null, lastExtras = null;
@@ -165,13 +179,13 @@
     $('management-note').textContent = m ? 'Ambas PCs pueden ver y controlar las pantallas de la sesión.' : 'Las pantallas se suman al mapa, pero nadie las ve ni las controla hasta que el anfitrión active este interruptor.';
     const shown = (list, remote) => (list || []).filter(s => !(state.placements || []).some(p => p.hidden && p.id === s.id && !!p.remote === remote));
     const pcs = [{ name: state.machineName + ' (esta PC)', screens: shown(state.local, false) }];
-    if (state.connected) pcs.push({ name: state.remoteName || 'Otra PC', screens: shown(state.remote, true) });
-    const total = pcs.reduce((n, p) => n + p.screens.length, 0), cols = Math.max(1, ...pcs.map(p => p.screens.length));
+    if (state.connected || (state.remote || []).length) pcs.push({ name: (state.remoteName || 'Otra PC') + (state.connected ? '' : ' (desconectada)'), screens: shown(state.remote, true), offline: !state.connected });
+    const total = pcs.filter(p => !p.offline).reduce((n, p) => n + p.screens.length, 0), cols = Math.max(1, ...pcs.map(p => p.screens.length));
     $('screen-count').textContent = `${total} de ${max}`;
     const grid = $('screen-grid'); grid.replaceChildren(); grid.style.setProperty('--cols', cols);
     for (const pc of pcs) {
-      const label = document.createElement('div'); label.className = 'grid-pc'; label.textContent = pc.name; label.setAttribute('role', 'listitem'); grid.append(label);
-      for (let i = 0; i < cols; i++) { const s = pc.screens[i], cell = document.createElement('div'); cell.className = 'grid-cell' + (s ? '' : ' empty'); if (s) { const b = document.createElement('strong'), d = document.createElement('small'); b.textContent = s.label || `Pantalla ${i + 1}`; d.textContent = `${s.width} × ${s.height}`; cell.append(b, d); } grid.append(cell); }
+      const label = document.createElement('div'); label.className = 'grid-pc' + (pc.offline ? ' offline' : ''); label.textContent = pc.name; label.setAttribute('role', 'listitem'); grid.append(label);
+      for (let i = 0; i < cols; i++) { const s = pc.screens[i], cell = document.createElement('div'); cell.className = 'grid-cell' + (s ? '' : ' empty') + (pc.offline ? ' offline' : ''); if (s) { const b = document.createElement('strong'), d = document.createElement('small'); b.textContent = s.label || `Pantalla ${i + 1}`; d.textContent = `${s.width} × ${s.height}`; cell.append(b, d); } grid.append(cell); }
     }
     $('grid-note').textContent = total >= max ? `Llegaste al límite de ${max} pantallas por sesión.` : `Caben ${max - total} pantallas más en esta sesión.`;
   }
@@ -221,7 +235,8 @@
   // Quitar una pantalla del mapa (se confirma con un segundo clic) y restaurarlas.
   let removeArmed = null, armTimer;
   function hideScreen(key, saveNow) {
-    const p = draft.placements.find(p => M.key(p) === key); if (!p || rects().length <= 1) return;
+    const p = draft.placements.find(p => M.key(p) === key);
+    if (!p || !p.remote || state.role !== 'Server' || rects().length <= 1) { toast('Solo el anfitrión puede quitar pantallas de invitados. Las pantallas propias no se quitan.'); return; }
     p.hidden = true; dirty = true; if (selected === key) selected = M.key(rects()[0]);
     buildNodes(); update(); fit();
     if (saveNow) { saving = true; update(); send({ type: 'save', map: structuredClone(draft) }); } else toast('Pantalla quitada. Guarda el mapa para aplicarlo.');
@@ -254,7 +269,7 @@
   window.__tecTest = { receive, draft: () => structuredClone(draft), select: key => { selected = key; update(); } };
   if (preview) {
     window.__tecMessages = [];
-    receive({ type: 'state', state: { machineName: 'JENAV', remoteName: 'RAFAEL', connected: true, mode: 'local', role: 'Server', sessionCode: 'K7M-4QX', joinCode: '', management: false, maxScreens: 10, host: '192.168.12.183', port: 51777, status: 'Conexión por red local', extras: true, pointerSpeed: 10, cursorStyle: 'green', cursorSize: 150, transfer: '', receiveFolder: 'C:\\Users\\jenav\\Downloads\\TecLink', automatic: true, theme: 'dark', peerMapSupported: true, spatialEnabled: true,
+    receive({ type: 'state', state: { machineName: 'JENAV', remoteName: 'RAFAEL', peerStatus: 'connected', connected: true, mode: 'local', role: 'Server', sessionCode: 'K7M-4QX', joinCode: '', management: false, maxScreens: 10, host: '192.168.12.183', port: 51777, status: 'Conexión por red local', extras: true, pointerSpeed: 10, cursorStyle: 'green', cursorSize: 150, transfer: '', receiveFolder: 'C:\\Users\\jenav\\Downloads\\TecLink', automatic: true, theme: 'dark', peerMapSupported: true, spatialEnabled: true,
       local: [{ id: 'screen1', label: 'Pantalla 1', primary: true, left: 0, top: 0, width: 2240, height: 1400 }, { id: 'screen2', label: 'Pantalla 2 · HDMI', left: -1600, top: -2160, width: 3840, height: 2160 }], remote: [{ id: 'screen1', label: 'Pantalla 1', left: 0, top: 0, width: 1920, height: 1080 }], placements: [{ id: 'screen1', remote: false, x: 0, y: 0 }, { id: 'screen2', remote: false, x: -1600, y: -2160 }, { id: 'screen1', remote: true, x: -1920, y: 0 }] } });
   } else { window.chrome?.webview?.addEventListener('message', e => receive(e.data)); send({ type: 'ready' }); }
 })();

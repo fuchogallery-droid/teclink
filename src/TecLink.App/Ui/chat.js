@@ -66,6 +66,11 @@
     addMessage({ from, text, at: at || Date.now() / 1000, mine: false });
     if (!open) { unread++; badge(); }
   }
+  function system(text) {
+    const li = document.createElement('li'); li.className = 'system'; li.textContent = text; el['chat-log'].append(li); scroll();
+    if (!open) { unread++; badge(); }
+  }
+  function reset() { history.length = 0; el['chat-log'].replaceChildren(); unread = 0; badge(); }
   function sendText(e) {
     e.preventDefault(); const text = el['chat-input'].value.trim(); if (!text) return;
     if (!state?.connected) { api.toast('Todavía no hay nadie conectado para recibir el mensaje.'); return; }
@@ -160,5 +165,5 @@
     sync(); people();
   }
   function render(newState) { state = newState; if (el['chat-bubble']) people(); }
-  window.TecChat = { init, render, incoming, voice };
+  window.TecChat = { init, render, incoming, voice, system, reset };
 })();

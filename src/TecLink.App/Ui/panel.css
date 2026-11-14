@@ -131,3 +131,6 @@ button.danger{border-color:var(--red);color:var(--red)}
 details.join-more{margin:8px 0}
 details.join-more summary{cursor:pointer;min-height:40px;display:flex;align-items:center;font-weight:600}
 #join-address{width:100%;min-height:44px;padding:0 12px;box-sizing:border-box;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--text);font:inherit}
+.monitor.offline,.room-card.offline,.grid-cell.offline{opacity:.5;border-style:dashed;filter:grayscale(1)}
+.grid-pc.offline{color:var(--muted);text-decoration:line-through}
+.chat-log li.system{align-self:center;max-width:100%;background:transparent;border:1px dashed var(--line);color:var(--muted);font-size:12px;text-align:center}

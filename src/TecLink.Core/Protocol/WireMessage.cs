@@ -94,6 +94,7 @@ public sealed class WireMessage
 
     /// <summary>First byte = 1 when the person is already cut out (transparent background); the rest is a WebP image.</summary>
     public static WireMessage CameraFrame(byte[] data) => new() { Type = MessageType.CameraFrame, Data = data };
+    public static WireMessage Leave() => new() { Type = MessageType.Leave };
     public static WireMessage ChatText(string text) => new() { Type = MessageType.Chat, Text = text };
     public static WireMessage VoiceChunk(byte[] pcm) => new() { Type = MessageType.Voice, Data = pcm };
     public static WireMessage FileListRequest() => new() { Type = MessageType.FileListRequest };

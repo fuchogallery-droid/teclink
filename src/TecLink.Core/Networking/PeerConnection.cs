@@ -33,9 +33,22 @@ public sealed class PeerConnection : IAsyncDisposable
     {
         _client = client;
         _client.NoDelay = true; // low latency matters more than throughput here
+        try
+        {
+            // A PC that sleeps, loses Wi-Fi or is switched off never says goodbye: probe an idle link
+            // (10 s, then every 3 s, 3 times) so a dead peer is noticed in ~20 s instead of never.
+            var socket = client.Client;
+            socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+            socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveTime, 10);
+            socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval, 3);
+            socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount, 3);
+        }
+        catch (Exception ex) when (ex is SocketException or ObjectDisposedException or PlatformNotSupportedException) { }
         _stream = client.GetStream();
         _sendTask = SendLoopAsync();
     }
+
+    public bool IsDisconnected => Volatile.Read(ref _disconnected) == 1;
 
     public void StartReceiving() => _receiveTask ??= ReceiveLoopAsync(_cts.Token);
 

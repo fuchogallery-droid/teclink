@@ -319,4 +319,83 @@ finally { try { Directory.Delete(work, true); } catch (IOException) { } }
     }
     finally { try { Directory.Delete(folder, true); } catch (IOException) { } }
 }
+
+// ---- Simulations: host admission over real sockets, and who may remove a screen ----
+{
+    using var all = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+    const string Code = "K7M4QX";
+    async Task<PeerConnection> Dial(int port, Action<WireMessage>? onMessage = null)
+    {
+        var c = await PeerServer.ConnectAsync("127.0.0.1", port, all.Token);
+        if (onMessage is not null) c.MessageReceived += onMessage;
+        c.StartReceiving();
+        return c;
+    }
+    var refused = new List<string>();
+    await using var host = new HostAdmission(0, () => Code, TimeSpan.FromSeconds(2), all.Token);
+    host.Refused += (who, why) => { lock (refused) refused.Add(why); };
+
+    // 1) right code: admitted, and the Hello sent right behind the code is not lost
+    var g1Msgs = new List<WireMessage>();
+    var g1 = await Dial(host.Port, m => { lock (g1Msgs) g1Msgs.Add(m); });
+    await g1.SendAsync(WireMessage.Join(Code));
+    await g1.SendAsync(WireMessage.Hello("INVITADO-1", 1920, 1080));
+    var a1 = await host.Guests.ReadAsync(all.Token).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+    var replay = new List<WireMessage>(); a1.Attach(replay.Add);
+    await Task.Delay(300);
+    Check(replay.Select(m => m.Type).SequenceEqual(new[] { MessageType.Join, MessageType.Hello }), "Admitted guest: code and Hello are replayed in order");
+    Check(replay.Last().MachineName == "INVITADO-1", "The Hello keeps its content");
+
+    // 2) wrong code: told so and closed
+    var wrongMsgs = new List<WireMessage>();
+    var wrong = await Dial(host.Port, m => { lock (wrongMsgs) wrongMsgs.Add(m); });
+    await wrong.SendAsync(WireMessage.Join("ZZZZZZ"));
+    await Task.Delay(900);
+    lock (wrongMsgs) Check(wrongMsgs.Any(m => m.Type == MessageType.JoinResult && !m.Accepted && m.Text == "Código incorrecto"), "A wrong code is refused with a clear message");
+    lock (refused) Check(refused.Contains("código incorrecto"), "The host records the wrong code");
+
+    // 3) a connection that never sends a code is dropped and does not block the next guest
+    var mute = await Dial(host.Port);
+    var g2Msgs = new List<WireMessage>();
+    var g2 = await Dial(host.Port, m => { lock (g2Msgs) g2Msgs.Add(m); });
+    await g2.SendAsync(WireMessage.Join(Code));
+    // 4) the first guest is still connected but silent (a dead link): the newcomer replaces it
+    var a2 = await host.Guests.ReadAsync(all.Token).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+    Check(!a1.Connection.IsDisconnected, "The first guest's link is still open (it never said goodbye)");
+    Check(a2.Connection is not null, "A second guest with the right code is admitted while the first is still connected");
+    await Task.Delay(2600);
+    lock (refused) Check(refused.Contains("no envió el código a tiempo"), "A connection with no code is dropped after the timeout");
+
+    // 5) leaving on purpose reaches the other side
+    var leaves = new List<WireMessage>(); a2.Attach(m => { lock (leaves) leaves.Add(m); });
+    await g2.SendAsync(WireMessage.Leave());
+    await Task.Delay(400);
+    lock (leaves) Check(leaves.Any(m => m.Type == MessageType.Leave), "Leave travels so the other PC can show 'left'");
+    Check(WireMessage.Decode(WireMessage.Leave().Encode()).Type == MessageType.Leave, "Leave round-trips");
+
+    await g1.DisposeAsync(); await g2.DisposeAsync(); await wrong.DisposeAsync(); await mute.DisposeAsync();
+}
+{
+    ScreenPlacement P(string id, bool remote, bool hidden = false) => new(id, remote, 0, 0, hidden);
+    var stored = new List<ScreenPlacement> { P("L1", false), P("L2", false), P("R1", true) };
+    // host (admin) saves: hides its own L2 and the guest's R1 -> only the guest's screen is hidden
+    var hostSave = SpatialMap.ApplyHiddenRules(new[] { P("L1", false), P("L2", false, true), P("R1", true, true) }, stored, true, false);
+    Check(!hostSave.Single(p => p.Id == "L2").Hidden, "The host can NEVER remove its own screen");
+    Check(hostSave.Single(p => p.Id == "R1").Hidden, "The host can remove a guest's screen");
+    // a guest asks the host to remove something: ignored
+    var fromGuest = SpatialMap.ApplyHiddenRules(new[] { P("L1", false, true), P("R1", true, true) }, stored, true, true);
+    Check(fromGuest.All(p => !p.Hidden), "A guest cannot make the host remove screens");
+    // guest side: the host decided to remove the guest's screen (mirrored as Remote=false), and tries to hide its own screen too
+    var guestStored = new List<ScreenPlacement> { P("G1", false), P("H1", true) };
+    var fromHost = SpatialMap.ApplyHiddenRules(new[] { P("G1", false, true), P("H1", true, true) }, guestStored, false, true);
+    Check(fromHost.Single(p => p.Id == "G1").Hidden, "The guest accepts that the host removed its screen");
+    Check(!fromHost.Single(p => p.Id == "H1").Hidden, "A hidden flag on the host's screens is ignored");
+    // the guest saves locally: cannot hide or unhide anything
+    var guestLocal = SpatialMap.ApplyHiddenRules(new[] { P("G1", false, false), P("H1", true, true) }, new List<ScreenPlacement> { P("G1", false, true), P("H1", true) }, false, false);
+    Check(guestLocal.Single(p => p.Id == "G1").Hidden && !guestLocal.Single(p => p.Id == "H1").Hidden, "A guest keeps exactly what the host decided");
+    // Repair of a broken state: both of the host's screens were hidden before this rule existed
+    var broken = new List<ScreenPlacement> { P("L1", false, true), P("L2", false, true), P("R1", true) };
+    var repaired = SpatialMap.ApplyHiddenRules(broken, broken, true, false);
+    Check(repaired.All(p => !p.Hidden), "The host's own screens come back after a wrong removal");
+}
 Console.WriteLine($"PASS: {checks} geometry, input, map, TCP, pointer and file-transfer regression checks");

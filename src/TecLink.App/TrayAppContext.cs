@@ -82,7 +82,9 @@ public sealed class TrayAppContext : ApplicationContext
     private void Session(string action, string? code, string? address)
     {
         if (action == "firewall") { _ = Task.Run(_bridge.AllowFirewall); return; }
-        if (action == "join") _bridge.JoinSession(code, address); else _bridge.StartHosting();
+        if (action == "join") { _bridge.JoinSession(code, address); } else _bridge.StartHosting();
+        _bridge.AnnounceLeave();  // whoever was on the other end sees "left", not "link lost"
+        _bridge.ClearRemote();    // and this PC starts from an empty suite
         RestartNetworking();
     }
 
@@ -91,10 +93,11 @@ public sealed class TrayAppContext : ApplicationContext
     private void SetPower(bool on)
     {
         if (on == _bridge.Powered) return;
+        if (!on) _bridge.AnnounceLeave();
         _bridge.Powered = on;
         _powerItem.Checked = on;
         if (on) { CursorStyler.Apply(_config.CursorStyle, _config.CursorSizePercent); StartNetworking(); }
-        else { _netCts?.Cancel(); _netCts = null; CursorStyler.Restore(); }
+        else { _netCts?.Cancel(); _netCts = null; _bridge.ClearRemote(); CursorStyler.Restore(); }
         OnControlChanged(on ? "TecLink encendido" : "TecLink apagado");
         _panel?.RefreshState();
     }
@@ -167,6 +170,7 @@ public sealed class TrayAppContext : ApplicationContext
 
     private void ExitApp()
     {
+        _bridge.AnnounceLeave();
         _cts.Cancel();
         if (_viewer is { IsDisposed: false }) _viewer.Close();
         CursorStyler.Restore();

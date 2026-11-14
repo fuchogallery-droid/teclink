@@ -22,10 +22,10 @@
     const list = [];
     const add = (arr, remote, pcName, row) => (arr || []).forEach((s, col) => {
       if (hidden.some(p => p.id === s.id && !!p.remote === remote)) return;
-      list.push({ key: 's:' + api.key({ id: s.id, remote }), kind: 'screen', remote, screen: s, pc: pcName, row, col, n: col + 1 });
+      list.push({ key: 's:' + api.key({ id: s.id, remote }), kind: 'screen', remote, screen: s, pc: pcName, row, col, n: col + 1, offline: remote && !state.connected });
     });
     add(state.local, false, state.machineName, 0);
-    if (state.connected) add(state.remote, true, state.remoteName || 'Otra PC', 1);
+    if (state.connected || (state.remote || []).length) add(state.remote, true, state.remoteName || 'Otra PC', 1);
     if (cam.on) list.push({ key: 'cam:me', kind: 'bubble', mine: true });
     if (peer.url && Date.now() - peer.last < 4000) list.push({ key: 'cam:peer', kind: 'bubble', mine: false });
     return list;
@@ -124,9 +124,10 @@
       if (item.kind === 'screen') {
         node.setAttribute('aria-label', `${item.pc}, pantalla ${item.n}`);
         node.querySelector('strong').textContent = `${item.screen.label || 'Pantalla ' + item.n}`;
-        node.querySelector('small').textContent = `${item.pc} · ${item.screen.width} × ${item.screen.height}`;
+        node.querySelector('small').textContent = `${item.pc} · ${item.screen.width} × ${item.screen.height}${item.offline ? ' · Desconectada' : ''}`;
+        node.classList.toggle('offline', !!item.offline);
         node.querySelector('.rc-screen').style.aspectRatio = `${item.screen.width} / ${item.screen.height}`; node.querySelector('.rc-screen b').textContent = item.n;
-        node.querySelector('.rc-live').hidden = !item.remote; node.querySelector('.rc-live').disabled = !state.extras || !state.management && state.sessionMode;
+        node.querySelector('.rc-live').hidden = !item.remote; node.querySelector('.rc-x').hidden = !(item.remote && state.role === 'Server'); node.querySelector('.rc-live').disabled = item.offline || !state.extras || !state.management && state.sessionMode;
         const x = node.querySelector('.rc-x'); if (armed !== item.key) { x.textContent = '✕'; x.setAttribute('aria-label', 'Quitar esta pantalla'); }
       } else {
         node.setAttribute('aria-label', item.mine ? 'Tu cámara' : 'Cámara de ' + (state.remoteName || 'la otra PC'));

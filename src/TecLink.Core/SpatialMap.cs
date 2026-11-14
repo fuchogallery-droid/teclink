@@ -7,6 +7,22 @@ public sealed record ScreenPlacement(string Id, bool Remote, int X, int Y, bool 
 
 public static class SpatialMap
 {
+    /// <summary>
+    /// Who may remove a screen from the map: ONLY the session host, and ONLY screens that came from a guest.
+    /// Nobody removes their own screens; a guest can remove nothing (it keeps what the host decided).
+    /// `positions` are from this PC's point of view (Remote = the other PC's screens); `existing` is what is stored now.
+    /// </summary>
+    public static List<ScreenPlacement> ApplyHiddenRules(IEnumerable<ScreenPlacement> positions, IReadOnlyList<ScreenPlacement> existing, bool isHost, bool fromPeer)
+    {
+        bool WasHidden(ScreenPlacement p) => existing.Any(e => e.Id == p.Id && e.Remote == p.Remote && e.Hidden);
+        return positions.Select(p => isHost
+            ? (fromPeer ? p with { Hidden = WasHidden(p) }          // a guest cannot remove anything
+                        : p with { Hidden = p.Remote && p.Hidden })   // the host: only guest screens, never its own
+            : (fromPeer ? p with { Hidden = !p.Remote && p.Hidden }   // the host's decision about this PC's screens (mirrored: Remote=false is ours)
+                        : p with { Hidden = WasHidden(p) }))          // a guest cannot change it
+            .ToList();
+    }
+
     public static List<ScreenRoute> Build(DisplayInfo[] local, DisplayInfo[] remote, IReadOnlyList<ScreenPlacement> allPositions)
     {
         var hidden = allPositions.Where(p => p.Hidden).Select(p => (p.Id, p.Remote)).ToHashSet();
