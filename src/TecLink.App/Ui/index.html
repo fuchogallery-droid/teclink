@@ -55,10 +55,13 @@
         <div id="session-code" class="session-code" aria-label="Código de tu sesión">——</div>
         <button id="copy-code" class="primary">Copiar código</button>
         <p id="host-status" class="map-note" role="status"></p>
+        <p id="host-address" class="map-note"></p>
+        <div id="firewall-box" class="firewall-box" hidden><p><strong>Windows puede estar bloqueando las conexiones.</strong> Permite TecLink una sola vez para que otras PCs te encuentren.</p><button id="firewall-btn" class="secondary">Permitir en el Firewall</button></div>
       </div></section>
       <section id="join-card" class="panel" aria-labelledby="join-title"><div class="section-head"><h2 id="join-title">Unirme a otra sesión</h2></div><div class="card-body">
         <label class="field-label" for="join-code">Código de la sesión</label>
         <input id="join-code" type="text" inputmode="text" autocomplete="off" autocapitalize="characters" maxlength="7" placeholder="ABC-DEF" spellcheck="false">
+        <details class="join-more"><summary>Si no la encuentra sola</summary><label class="field-label" for="join-address">Dirección de la otra PC (opcional)</label><input id="join-address" type="text" inputmode="decimal" autocomplete="off" placeholder="192.168.1.20" spellcheck="false"><p class="map-note">Aparece debajo del código en la otra PC.</p></details>
         <div class="file-actions"><button id="join-btn" class="secondary">Unirme</button><button id="leave-btn" class="secondary" hidden>Salir de la sesión</button></div>
         <p id="join-notice" class="map-warning" role="alert"></p>
       </div></section>

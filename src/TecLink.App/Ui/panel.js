@@ -150,6 +150,10 @@
     const guest = !host && !legacy;
     $('host-status').textContent = legacy ? 'Ahora usas un enlace directo por IP. Pulsa «Abrir mi propia sesión» para invitar con código.' : guest ? 'Estás unido a otra sesión. Sal de ella para invitar a alguien.' : state.connected ? `${state.remoteName || 'Otra PC'} está conectada a tu sesión.` : 'Esperando a que alguien se una con este código.';
     $('host-card').classList.toggle('inactive', !host);
+    const addrs = state.addresses || [];
+    $('host-address').textContent = addrs.length ? `Dirección de esta PC (por si la otra no la encuentra sola): ${addrs.join(' · ')}` : '';
+    $('firewall-box').hidden = state.firewall !== false || !host;
+    if (document.activeElement !== $('join-address') && !$('join-address').value && state.peerAddress) $('join-address').value = state.peerAddress;
     if (document.activeElement !== $('join-code') && guest) $('join-code').value = state.joinCode || '';
     $('leave-btn').hidden = host; $('leave-btn').textContent = legacy ? 'Abrir mi propia sesión' : 'Salir de la sesión';
     $('join-btn').hidden = guest; $('join-code').disabled = guest;
@@ -175,7 +179,8 @@
   $('copy-code').onclick = async () => { const code = (state?.sessionCode || '').replace('-', ''); if (!code) return; try { await navigator.clipboard.writeText(state.sessionCode); toast('Código copiado: ' + state.sessionCode); } catch { toast('Tu código es ' + state.sessionCode); } };
   $('join-code').oninput = e => { const raw = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6); e.target.value = raw.length > 3 ? raw.slice(0, 3) + '-' + raw.slice(3) : raw; };
   $('join-code').onkeydown = e => { if (e.key === 'Enter') $('join-btn').click(); };
-  $('join-btn').onclick = () => { const code = $('join-code').value.replace(/[^A-Za-z0-9]/g, ''); if (code.length !== 6) { toast('El código tiene 6 letras o números.'); return; } send({ type: 'session', action: 'join', code }); };
+  $('join-btn').onclick = () => { const code = $('join-code').value.replace(/[^A-Za-z0-9]/g, ''); if (code.length !== 6) { toast('El código tiene 6 letras o números.'); return; } send({ type: 'session', action: 'join', code, address: $('join-address').value.trim() }); toast('Buscando la sesión en tu red…'); };
+  $('firewall-btn').onclick = () => { send({ type: 'session', action: 'firewall' }); toast('Windows te pedirá permiso: pulsa Sí.'); };
   $('leave-btn').onclick = () => send({ type: 'session', action: 'host' });
   let pointerBusy = false, pointerTimer, chosenStyle = 'system';
   function sendPointer() {

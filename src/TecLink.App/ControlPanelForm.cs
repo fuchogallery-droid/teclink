@@ -29,13 +29,13 @@ public sealed class ControlPanelForm : Form
     }
 
     private readonly Action<bool> _setPower;
-    private readonly Action<string, string?> _session;
+    private readonly Action<string, string?, string?> _session;
     private readonly Action<byte[]> _cameraHandler;
     private readonly Action<string> _peerFilesHandler;
     private readonly Action<string, string> _chatHandler;
     private readonly Action<byte[]> _voiceHandler;
 
-    public ControlPanelForm(EdgeBridge bridge, Func<string> status, Action openViewer, Action<bool> setPower, Action<string, string?> session)
+    public ControlPanelForm(EdgeBridge bridge, Func<string> status, Action openViewer, Action<bool> setPower, Action<string, string?, string?> session)
     {
         _bridge = bridge; _status = status; _openViewer = openViewer; _setPower = setPower; _session = session;
         Text = "TecLink — pantallas y salidas";
@@ -135,7 +135,8 @@ public sealed class ControlPanelForm : Form
                     break;
                 case "setPower": _setPower(root.GetProperty("on").GetBoolean()); RefreshState(); break;
                 case "session":
-                    _session(root.GetProperty("action").GetString() ?? "", root.TryGetProperty("code", out var code) ? code.GetString() : null);
+                    _session(root.GetProperty("action").GetString() ?? "", root.TryGetProperty("code", out var code) ? code.GetString() : null,
+                        root.TryGetProperty("address", out var address) ? address.GetString() : null);
                     RefreshState();
                     break;
                 case "cameraFrame":

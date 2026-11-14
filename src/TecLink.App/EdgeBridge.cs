@@ -170,11 +170,59 @@ public sealed class EdgeBridge : IDisposable
         _config.Save();
     }
 
-    public void JoinSession(string? code)
+    public void JoinSession(string? code, string? address = null)
     {
         var clean = SessionDiscovery.Normalize(code) ?? throw new ArgumentException("El código tiene 6 letras o números. Revísalo.");
+        if (SessionDiscovery.Normalize(_config.SessionCode) == clean) throw new ArgumentException("Ese es el código de esta PC. Escribe el de la otra PC.");
+        address = (address ?? "").Trim();
+        if (address.Length > 0 && (address.Length > 253 || !address.All(c => char.IsLetterOrDigit(c) || c is '.' or '-')))
+            throw new ArgumentException("La dirección solo puede tener números, letras, puntos y guiones. Ejemplo: 192.168.1.20");
         _config.Role = PeerRole.Client; _config.JoinCode = clean; _joinNotice = "";
+        if (address.Length > 0) _config.PeerHost = address; // fallback when the network blocks the automatic search
         _config.Save();
+        _joinNotice = "";
+    }
+
+    /// <summary>IPv4 addresses of this PC on real networks, to show next to the code.</summary>
+    public static string[] LocalAddresses() => System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()
+        .Where(n => n.OperationalStatus == System.Net.NetworkInformation.OperationalStatus.Up && n.NetworkInterfaceType != System.Net.NetworkInformation.NetworkInterfaceType.Loopback)
+        .SelectMany(n => n.GetIPProperties().UnicastAddresses).Select(a => a.Address)
+        .Where(a => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && !a.ToString().StartsWith("169.254."))
+        .Select(a => a.ToString()).Distinct().ToArray();
+
+    private const string FirewallRuleName = "TecLink (sesiones)";
+    private static (DateTime At, bool Ok) _firewallCache;
+
+    /// <summary>True when Windows already has an inbound allow rule for TecLink (cached for 20 s).</summary>
+    public static bool FirewallAllowed()
+    {
+        if (DateTime.UtcNow - _firewallCache.At < TimeSpan.FromSeconds(20)) return _firewallCache.Ok;
+        var ok = false;
+        try
+        {
+            using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("netsh", $"advfirewall firewall show rule name=\"{FirewallRuleName}\"")
+            { CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true });
+            p!.StandardOutput.ReadToEnd(); p.WaitForExit(4000); ok = p.ExitCode == 0;
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException) { }
+        _firewallCache = (DateTime.UtcNow, ok);
+        return ok;
+    }
+
+    /// <summary>Asks Windows (one UAC prompt) to allow TecLink on private and domain networks.</summary>
+    public void AllowFirewall()
+    {
+        var exe = Application.ExecutablePath;
+        var args = $"advfirewall firewall add rule name=\"{FirewallRuleName}\" dir=in action=allow program=\"{exe}\" enable=yes profile=private,domain";
+        try
+        {
+            using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("netsh", args)
+            { Verb = "runas", UseShellExecute = true, WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden });
+            p?.WaitForExit(15000);
+        }
+        catch (System.ComponentModel.Win32Exception) { StatusChanged?.Invoke("No se concedió el permiso de Windows. Vuelve a intentarlo y pulsa Sí."); return; }
+        _firewallCache = default;
+        StatusChanged?.Invoke(FirewallAllowed() ? "Firewall listo: TecLink puede recibir conexiones." : "No se pudo crear la regla del Firewall.");
     }
 
     /// <summary>Host only: lets both PCs see and control each other's screens, or closes that again.</summary>
@@ -226,7 +274,8 @@ public sealed class EdgeBridge : IDisposable
     public async Task RunNetworkingAsync(CancellationToken ct)
     {
         if (_config.Role == PeerRole.Server)
-            _ = SessionDiscovery.RunResponderAsync(() => SessionDiscovery.Normalize(_config.SessionCode) ?? "", _config.Port, ct);
+            _ = SessionDiscovery.RunResponderAsync(() => SessionDiscovery.Normalize(_config.SessionCode) ?? "", _config.Port, ct,
+                ex => { Logger.LogError(ex); StatusChanged?.Invoke("Otra PC no podrá encontrarte: " + ex.Message); });
         while (!ct.IsCancellationRequested)
         {
             PeerConnection connection;
@@ -240,14 +289,25 @@ public sealed class EdgeBridge : IDisposable
                 else if (guestCode is not null)
                 {
                     var host = await SessionDiscovery.FindAsync(guestCode, TimeSpan.FromSeconds(5), ct);
-                    if (host is null)
+                    var hostAddress = host?.Address.ToString();
+                    var hostPort = host?.Port ?? _config.Port;
+                    if (host is null && !string.IsNullOrWhiteSpace(_config.PeerHost))
                     {
-                        _joinNotice = "No encontré esa sesión. Revisa el código y que la otra PC esté abierta en la misma red.";
+                        // The network blocked the automatic search: try the address typed by hand.
+                        hostAddress = _config.PeerHost.Trim();
+                        StatusChanged?.Invoke($"No la encontré sola. Probando con {hostAddress}...");
+                    }
+                    if (hostAddress is null)
+                    {
+                        _joinNotice = "No encontré esa sesión. Revisa el código, que la otra PC tenga TecLink abierto en la misma red, y que su Firewall lo permita (botón «Permitir en el Firewall»).";
                         StatusChanged?.Invoke(_joinNotice);
                         await Task.Delay(2500, ct);
                         continue;
                     }
-                    connection = await PeerServer.ConnectAsync(host.Address.ToString(), host.Port, ct);
+                    using var attempt = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    attempt.CancelAfter(TimeSpan.FromSeconds(6));
+                    try { connection = await PeerServer.ConnectAsync(hostAddress, hostPort, attempt.Token); }
+                    catch (OperationCanceledException) when (!ct.IsCancellationRequested) { throw new IOException("la otra PC no respondió (¿Firewall?)"); }
                 }
                 else connection = await PeerServer.ConnectAsync(_config.PeerHost, _config.Port, ct);
             }
@@ -257,6 +317,7 @@ public sealed class EdgeBridge : IDisposable
             }
             catch (Exception ex)
             {
+                if (guestCode is not null) _joinNotice = $"No pude conectar: {ex.Message}. Reintentando...";
                 StatusChanged?.Invoke($"Error de red: {ex.Message}. Reintentando en 3s...");
                 await Task.Delay(3000, ct);
                 continue;
@@ -287,7 +348,7 @@ public sealed class EdgeBridge : IDisposable
             }
             else
             {
-                StatusChanged?.Invoke("Alguien se está conectando...");
+                if (!_joined) StatusChanged?.Invoke("Alguien se está conectando...");
                 // The guest must send the code right away.
                 _ = Task.Delay(5000).ContinueWith(_ => { if (_connection == connection && !_joined) _dropCurrent?.Invoke(); });
             }
@@ -744,6 +805,7 @@ public sealed class EdgeBridge : IDisposable
             sessionCode = SessionDiscovery.Pretty(SessionDiscovery.Normalize(_config.SessionCode) ?? ""),
             joinCode = SessionDiscovery.Pretty(SessionDiscovery.Normalize(_config.JoinCode) ?? ""),
             sessionMode = _sessionMode, management = _management, joinNotice = _joinNotice, maxScreens = MaxScreens,
+            addresses = LocalAddresses(), firewall = FirewallAllowed(), peerAddress = _config.PeerHost,
             pointerSpeed = CurrentSpeedLevel(), cursorStyle = CursorStyler.Normalize(_config.CursorStyle),
             cursorSize = CursorStyler.ClampSize(_config.CursorSizePercent), extras = CanUseExtras,
             transfer = Files.LastStatus, receiveFolder = Files.ReceiveFolder,

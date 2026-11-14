@@ -32,7 +32,12 @@ internal static class Program
             // First run needs no form: this PC hosts its own session and the panel's
             // "Conectar" tab handles inviting or joining.
             var config = AppConfig.TryLoad() ?? new AppConfig { Role = PeerRole.Server };
-            if (SessionDiscovery.Normalize(config.SessionCode) is null) { config.SessionCode = SessionDiscovery.NewCode(); config.Save(); }
+            var migrate = false;
+            if (SessionDiscovery.Normalize(config.SessionCode) is null) { config.SessionCode = SessionDiscovery.NewCode(); migrate = true; }
+            // A pre-0.6 "client" link (fixed IP, no code) can never be found by an invitation code:
+            // every PC now opens its own session and joins another one only when asked to.
+            if (config.Role == PeerRole.Client && SessionDiscovery.Normalize(config.JoinCode) is null) { config.Role = PeerRole.Server; migrate = true; }
+            if (migrate) config.Save();
 
             using var app = new TrayAppContext(config);
             app.BindShowSignal(showPanel);

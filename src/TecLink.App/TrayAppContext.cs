@@ -79,9 +79,10 @@ public sealed class TrayAppContext : ApplicationContext
     }
 
     /// <summary>Panel actions: open my own session (host), join another with a code, or leave.</summary>
-    private void Session(string action, string? code)
+    private void Session(string action, string? code, string? address)
     {
-        if (action == "join") _bridge.JoinSession(code); else _bridge.StartHosting();
+        if (action == "firewall") { _ = Task.Run(_bridge.AllowFirewall); return; }
+        if (action == "join") _bridge.JoinSession(code, address); else _bridge.StartHosting();
         RestartNetworking();
     }
 
@@ -101,6 +102,7 @@ public sealed class TrayAppContext : ApplicationContext
     private void OnStatusChanged(string status)
     {
         _status = status;
+        Logger.Info(status);
         // status events arrive from the networking/hook threads; NotifyIcon must be touched from the UI thread
         _clipboard.BeginInvoke(() =>
         {

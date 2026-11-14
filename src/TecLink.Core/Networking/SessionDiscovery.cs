@@ -30,9 +30,12 @@ public static class SessionDiscovery
     public static string Pretty(string code) => code.Length == 6 ? code[..3] + "-" + code[3..] : code;
 
     /// <summary>Host side: answers "TECLINK?CODE" with its TCP port while the code matches.</summary>
-    public static async Task RunResponderAsync(Func<string> code, int tcpPort, CancellationToken ct)
+    public static async Task RunResponderAsync(Func<string> code, int tcpPort, CancellationToken ct, Action<Exception>? onError = null)
     {
-        using var udp = new UdpClient(new IPEndPoint(IPAddress.Any, DiscoveryPort)) { EnableBroadcast = true };
+        UdpClient udp;
+        try { udp = new UdpClient(new IPEndPoint(IPAddress.Any, DiscoveryPort)) { EnableBroadcast = true }; }
+        catch (SocketException ex) { onError?.Invoke(ex); return; } // port taken (another TecLink?) or blocked
+        using var _ = udp;
         using var reg = ct.Register(udp.Dispose);
         try
         {
