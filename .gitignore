@@ -4,3 +4,6 @@ obj/
 publish/
 relevo/
 node_modules/
+
+publish/
+out/
