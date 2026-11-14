@@ -32,6 +32,7 @@ public sealed class ControlPanelForm : Form
     {
         _bridge = bridge; _status = status; _openViewer = openViewer;
         Text = "TecLink — pantallas y salidas";
+        Icon = TrayAppContext.AppIcon;
         ClientSize = new Size(1120, 760);
         MinimumSize = new Size(370, 600);
         StartPosition = FormStartPosition.CenterScreen;
@@ -48,6 +49,10 @@ public sealed class ControlPanelForm : Form
             var profile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TecLink", "Panel");
             var environment = await CoreWebView2Environment.CreateAsync(userDataFolder: profile);
             await _web.EnsureCoreWebView2Async(environment);
+            // The panel files change with every rebuild; never let WebView2 serve a cached
+            // copy of them across runs, or UI edits can silently stop working.
+            try { await _web.CoreWebView2.Profile.ClearBrowsingDataAsync(CoreWebView2BrowsingDataKinds.DiskCache | CoreWebView2BrowsingDataKinds.CacheStorage); }
+            catch (Exception ex) { Logger.LogError(ex); }
             _web.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
             _web.CoreWebView2.Settings.AreDevToolsEnabled = false;
             _web.CoreWebView2.SetVirtualHostNameToFolderMapping("panel.teclink.local", Path.Combine(AppContext.BaseDirectory, "Ui"), CoreWebView2HostResourceAccessKind.DenyCors);

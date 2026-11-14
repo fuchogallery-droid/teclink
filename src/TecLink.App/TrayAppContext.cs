@@ -12,6 +12,10 @@ public sealed class TrayAppContext : ApplicationContext
     private string _status = "Iniciando conexión…";
     private RegisteredWaitHandle? _showRequest;
 
+    /// <summary>The TecLink isotype, baked into the exe via ApplicationIcon; read from the
+    /// running process instead of shipping a loose .ico so the single-file publish still has it.</summary>
+    public static Icon AppIcon { get; } = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
+
     public TrayAppContext(AppConfig config)
     {
         _config = config;
@@ -37,7 +41,7 @@ public sealed class TrayAppContext : ApplicationContext
 
         _trayIcon = new NotifyIcon
         {
-            Icon = SystemIcons.Application,
+            Icon = AppIcon,
             Text = "TecLink — iniciando...",
             ContextMenuStrip = menu,
             Visible = true,
