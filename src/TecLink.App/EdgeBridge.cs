@@ -43,6 +43,7 @@ public sealed partial class EdgeBridge : IDisposable
     private List<ScreenRoute> _spatialLocal = new(), _spatialRemote = new();
     private bool _spatialValid, _peerMapSupported;
     private Point? _lastLocalPoint;
+    private Rectangle _fastBounds; // inside of the monitor the mouse is on, minus a margin at the edges
     private readonly Dictionary<string, TaskCompletionSource<WireMessage>> _mapRequests = new();
 
     // Extras negotiated in Hello: pointer settings, remote screen and file transfer.
@@ -1023,7 +1024,10 @@ public sealed partial class EdgeBridge : IDisposable
         return connection.SendAsync(WireMessage.Hello(_config.MachineName, bounds.Width, bounds.Height, displays, true, _config.UseSpatialMap, true));
     }
 
-    private static DisplayInfo[] LocalDisplays() => Screen.AllScreens.Select(s =>
+    // Screen.AllScreens asks Windows for every monitor on each call; the mouse hook used to do that on every pixel of movement.
+    // The list only changes when Windows says so (OnDisplaySettingsChanged), so it is read once and reused.
+    private static DisplayInfo[]? _displayCache;
+    private static DisplayInfo[] LocalDisplays() => _displayCache ??= Screen.AllScreens.Select(s =>
         new DisplayInfo(s.DeviceName, s.Bounds.Left, s.Bounds.Top, s.Bounds.Width, s.Bounds.Height)).ToArray();
 
     private ScreenRoute RouteFor(string id) => _config.ScreenRoutes.FirstOrDefault(r => r.SourceId == id)
@@ -1113,6 +1117,7 @@ public sealed partial class EdgeBridge : IDisposable
 
     private void OnDisplaySettingsChanged(object? sender, EventArgs e)
     {
+        _displayCache = null; _fastBounds = Rectangle.Empty;
         if (_clipboard.IsDisposed) return;
         _clipboard.BeginInvoke(() =>
         {
@@ -1236,9 +1241,18 @@ public sealed partial class EdgeBridge : IDisposable
     private void HandleSpatialLocalMove(HookMouseEventArgs e)
     {
         var candidate = new Point(e.X, e.Y);
+        // Fast path (almost every move): both points well inside the same monitor, far from any edge, so no crossing is possible.
+        if (_lastLocalPoint is { } last && _fastBounds.Contains(candidate) && _fastBounds.Contains(last))
+        {
+            _lastLocalPoint = candidate;
+            return;
+        }
         Win32.GetCursorPos(out var cursor);
         var previous = _lastLocalPoint ?? new Point(cursor.x, cursor.y);
         var local = LocalDisplays();
+        _fastBounds = Rectangle.Empty;
+        foreach (var d in local)
+            if (d.Bounds.Contains(candidate)) { _fastBounds = Rectangle.Inflate(d.Bounds, -6, -6); break; }
         var source = local.FirstOrDefault(d => d.Bounds.Contains(previous)) ?? local.FirstOrDefault(d => d.Bounds.Contains(candidate));
         if (source is null) { _lastLocalPoint = candidate; return; }
         var transition = SpatialNavigation.Find(source, previous, candidate, _spatialLocal, local, _remoteDisplays);

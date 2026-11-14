@@ -229,6 +229,8 @@
     set('cam-cutout', cam.cutout, `Quitar fondo: ${cam.cutout ? 'sí' : 'no'}`);
     set('cam-mirror', cam.mirror, `Espejo: ${cam.mirror ? 'sí' : 'no'}`);
     $('cam-cutout').disabled = $('cam-mirror').disabled = !cam.on;
+    document.querySelectorAll('[data-cam-cutout]').forEach(b => { b.disabled = !cam.on; b.setAttribute('aria-pressed', cam.cutout); b.classList.toggle('on', cam.cutout); });
+    document.querySelectorAll('[data-cam-mirror]').forEach(b => { b.disabled = !cam.on; b.setAttribute('aria-pressed', cam.mirror); b.classList.toggle('on', cam.mirror); });
     document.querySelectorAll('[data-cam-switch]').forEach(b => { b.setAttribute('aria-pressed', cam.on); b.classList.toggle('on', cam.on); const l = b.querySelector('span'); if (l) l.textContent = cam.on ? 'Cámara encendida' : 'Cámara'; });
     const hidden = state ? screens().filter(i => layout()[i.key]?.hidden).length : 0;
     $('room-show').hidden = !hidden; $('room-show').textContent = `Mostrar ocultas (${hidden})`;
@@ -341,6 +343,8 @@
     $('cam-toggle').onclick = () => setCamera(!cam.on);
     $('cam-cutout').onclick = () => { cam.cutout = !cam.cutout; if (cam.cutout) prepareCutout(); refresh(); };
     $('cam-mirror').onclick = () => { cam.mirror = !cam.mirror; render(); };
+    document.querySelectorAll('[data-cam-cutout]').forEach(b => b.onclick = () => $('cam-cutout').click());
+    document.querySelectorAll('[data-cam-mirror]').forEach(b => b.onclick = () => $('cam-mirror').click());
     document.querySelectorAll('[data-cam-switch]').forEach(b => b.onclick = () => setCamera(!cam.on));
     document.querySelectorAll('[data-cols]').forEach(b => b.onclick = () => arrange(Number(b.dataset.cols)));
     $('room-lock').onclick = () => { store.locked = !store.locked; save(); render(); api.toast(store.locked ? 'Tarjetas fijas: no se mueven hasta que toques el candado otra vez.' : 'Tarjetas liberadas: ya puedes moverlas.'); };

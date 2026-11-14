@@ -97,7 +97,7 @@ public sealed class PeerConnection : IAsyncDisposable
                         if (_outbound.First is null) break;
                         mouse = _outbound.First.Value.Mouse;
                     }
-                    // At most 120 mouse updates/s, retaining the latest position
+                    // At most 250 mouse updates/s, retaining the latest position
                     // instead of accumulating seconds of stale motion on Wi-Fi.
                     var remaining = _nextMouseSend - Stopwatch.GetTimestamp();
                     if (mouse && remaining > 0)
@@ -108,7 +108,7 @@ public sealed class PeerConnection : IAsyncDisposable
                         current = _outbound.First.Value;
                         _outbound.RemoveFirst();
                     }
-                    if (current.Mouse) _nextMouseSend = Stopwatch.GetTimestamp() + Stopwatch.Frequency / 120;
+                    if (current.Mouse) _nextMouseSend = Stopwatch.GetTimestamp() + Stopwatch.Frequency / 250;
                     // One write per frame avoids separate tiny TCP packets for
                     // the length header and its payload. NoDelay remains enabled.
                     await _stream.WriteAsync(current.Frame, _cts.Token);

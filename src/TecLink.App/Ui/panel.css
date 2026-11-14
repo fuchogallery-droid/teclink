@@ -179,6 +179,12 @@ main>nav.tabs,main>.statusbar{flex:none}
 
 /* Sala en vivo */
 .room-toolbar{gap:10px}.toolbar-gap{flex:1}
+.mini-tools{display:inline-flex;align-items:center;gap:6px}
+.mini-tools .mini{min-height:30px;padding:0 10px;font-size:12px;border-radius:999px;background:transparent;border:1px solid var(--line);color:inherit}
+.mini-tools .mini.on{border-color:var(--accent);color:var(--accent)}
+.mini-tools .mini:disabled{opacity:.45}
+.mini-meter{width:54px;height:6px;border-radius:999px;background:var(--line);overflow:hidden;display:inline-block}
+.mini-meter i{display:block;height:100%;width:0;background:var(--accent);transition:width .08s linear}
 .seg{display:inline-flex}.seg button{min-width:48px;border-radius:0;margin-left:-1px}.seg button:first-child{border-radius:10px 0 0 10px;margin-left:0}.seg button:last-child{border-radius:0 10px 10px 0}
 .seg button[aria-pressed=true]{background:var(--accent);color:var(--bg);border-color:var(--accent);font-weight:700}
 .room-card.screen{background:#000}

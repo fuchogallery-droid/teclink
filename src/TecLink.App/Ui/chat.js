@@ -120,8 +120,9 @@
   }
   const talking = () => mic.on && state?.connected && (!mic.ptt || mic.holding);
   function meter() {
-    if (!mic.on) { el['mic-meter'].firstElementChild.style.width = '0%'; return; }
-    const pct = Math.round(mic.level * 100); el['mic-meter'].firstElementChild.style.width = pct + '%'; el['mic-meter'].setAttribute('aria-valuenow', pct);
+    const mini = document.querySelectorAll('.mini-meter i');
+    if (!mic.on) { el['mic-meter'].firstElementChild.style.width = '0%'; mini.forEach(i => i.style.width = '0%'); return; }
+    const pct = Math.round(mic.level * 100); el['mic-meter'].firstElementChild.style.width = pct + '%'; mini.forEach(i => i.style.width = pct + '%'); el['mic-meter'].setAttribute('aria-valuenow', pct);
     el['mic-meter'].classList.toggle('live', talking()); requestAnimationFrame(meter);
   }
   function sync() {

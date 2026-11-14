@@ -47,7 +47,8 @@ internal sealed class ScreenShareHost : IDisposable
     private async Task RunAsync(Func<WireMessage, Task> send, int index, int maxWidth, int maxHeight, CancellationToken ct)
     {
         Bitmap? full = null, scaled = null;
-        ulong lastHash = 0;
+        ulong lastHash = 0, lastSample = 0;
+        long lastSent = 0;
         using var parameters = new EncoderParameters(1);
         parameters.Param[0] = new EncoderParameter(Encoder.Quality, 90L);
         try
@@ -68,6 +69,9 @@ internal sealed class ScreenShareHost : IDisposable
                         g.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size);
                         DrawCursor(g, bounds);
                     }
+                    var sample = Sample(full);
+                    if (sample == lastSample && Environment.TickCount64 - lastSent < 2000) { await Task.Delay(30, ct); continue; } // nothing moved: no encode
+                    lastSample = sample;
                     var ratio = Math.Min(1.0, Math.Min((double)maxWidth / bounds.Width, (double)maxHeight / bounds.Height));
                     var source = full;
                     if (ratio < 0.999)
@@ -94,7 +98,7 @@ internal sealed class ScreenShareHost : IDisposable
                     var hash = Hash(jpeg);
                     if (hash != lastHash)
                     {
-                        lastHash = hash;
+                        lastHash = hash; lastSent = Environment.TickCount64;
                         while (_ack.CurrentCount > 0) await _ack.WaitAsync(ct);
                         await send(WireMessage.ScreenFrame(index, bounds.Left - desktop.Left, bounds.Top - desktop.Top, bounds.Width, bounds.Height, jpeg));
                         await _ack.WaitAsync(3000, ct);
@@ -124,6 +128,25 @@ internal sealed class ScreenShareHost : IDisposable
         var hdc = g.GetHdc();
         try { Win32.DrawIconEx(hdc, info.ptScreenPos.x - bounds.Left - hotX, info.ptScreenPos.y - bounds.Top - hotY, info.hCursor, 0, 0, 0, IntPtr.Zero, 3); }
         finally { g.ReleaseHdc(hdc); }
+    }
+
+    /// <summary>Cheap fingerprint of a picture (every 4th row, every 2nd pixel): tells whether anything changed
+    /// without paying for a JPEG encode of an identical screen.</summary>
+    internal static ulong Sample(Bitmap bitmap)
+    {
+        var data = bitmap.LockBits(new Rectangle(Point.Empty, bitmap.Size), ImageLockMode.ReadOnly, PixelFormat.Format32bppRgb);
+        try
+        {
+            var row = new int[data.Width];
+            var hash = 14695981039346656037UL;
+            for (var y = 0; y < data.Height; y += 4)
+            {
+                System.Runtime.InteropServices.Marshal.Copy(data.Scan0 + y * data.Stride, row, 0, row.Length);
+                for (var x = 0; x < row.Length; x += 2) hash = (hash ^ (uint)row[x]) * 1099511628211UL;
+            }
+            return hash;
+        }
+        finally { bitmap.UnlockBits(data); }
     }
 
     private static ulong Hash(byte[] data)

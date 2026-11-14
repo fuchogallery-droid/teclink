@@ -33,6 +33,8 @@ internal sealed class ScreenTiles : IDisposable
     private static async Task RunAsync(int[] indices, int maxWidth, Func<int, byte[], Task> sink, CancellationToken ct)
     {
         var hashes = new Dictionary<int, (ulong Hash, long At)>();
+        var samples = new Dictionary<int, (ulong Hash, long At)>();
+        var buffers = new Dictionary<int, (Bitmap Full, Bitmap Small)>();
         using var parameters = new EncoderParameters(1);
         // Text must stay readable: a good quality, and the picture is only shrunk as much as the card really needs.
         parameters.Param[0] = new EncoderParameter(Encoder.Quality, maxWidth > 1200 ? 78L : 82L);
@@ -53,13 +55,22 @@ internal sealed class ScreenTiles : IDisposable
                         var bounds = screens[index].Bounds;
                         var ratio = Math.Min(1.0, (double)maxWidth / bounds.Width);
                         var size = new Size(Math.Max(1, (int)(bounds.Width * ratio)), Math.Max(1, (int)(bounds.Height * ratio)));
-                        using var full = new Bitmap(bounds.Width, bounds.Height, PixelFormat.Format32bppRgb);
+                        // Both bitmaps are kept between rounds (a 4K frame is 33 MB: allocating it 3 times a second made the whole PC stutter).
+                        if (!buffers.TryGetValue(index, out var pair) || pair.Full.Size != bounds.Size || pair.Small.Size != size)
+                        {
+                            if (pair.Full is not null) { pair.Full.Dispose(); pair.Small.Dispose(); }
+                            pair = (new Bitmap(bounds.Width, bounds.Height, PixelFormat.Format32bppRgb), new Bitmap(size.Width, size.Height, PixelFormat.Format32bppRgb));
+                            buffers[index] = pair;
+                        }
+                        var full = pair.Full; var small = pair.Small;
                         using (var g = Graphics.FromImage(full))
                         {
                             g.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size);
                             ScreenShareHost.DrawCursor(g, bounds);
                         }
-                        using var small = new Bitmap(size.Width, size.Height, PixelFormat.Format32bppRgb);
+                        var sample = ScreenShareHost.Sample(full);
+                        if (samples.TryGetValue(index, out var seen) && seen.Hash == sample && Environment.TickCount64 - seen.At < 4000) continue; // unchanged: skip scaling and encoding
+                        samples[index] = (sample, Environment.TickCount64);
                         using (var g = Graphics.FromImage(small))
                         {
                             g.InterpolationMode = InterpolationMode.HighQualityBicubic; g.PixelOffsetMode = PixelOffsetMode.HighQuality; g.SmoothingMode = SmoothingMode.HighQuality;
@@ -87,6 +98,7 @@ internal sealed class ScreenTiles : IDisposable
         catch (OperationCanceledException) { }
         catch (ObjectDisposedException) { }
         catch (Exception ex) { Logger.LogError(ex); }
+        finally { foreach (var (full, small) in buffers.Values) { full.Dispose(); small.Dispose(); } }
     }
 
     private static ulong Hash(byte[] data)
