@@ -101,6 +101,7 @@ public sealed class WireMessage
     public static WireMessage ScreenTile(int index, int width, int height, byte[] jpeg) => new() { Type = MessageType.ScreenTile, Index = index, Width = width, Height = height, Data = jpeg };
     public static WireMessage ShareOffer(string json) => new() { Type = MessageType.ShareOffer, Text = json };
     public static WireMessage ShareFetch(string id) => new() { Type = MessageType.ShareFetch, Text = id };
+    public static WireMessage ProfileMsg(string json) => new() { Type = MessageType.Profile, Text = json };
     public static WireMessage Leave() => new() { Type = MessageType.Leave };
     public static WireMessage ChatText(string text) => new() { Type = MessageType.Chat, Text = text };
     public static WireMessage VoiceChunk(byte[] pcm) => new() { Type = MessageType.Voice, Data = pcm };
@@ -224,6 +225,7 @@ public sealed class WireMessage
             case MessageType.Probe:
             case MessageType.FileList:
             case MessageType.FileCommand:
+            case MessageType.Profile:
                 w.Write(Text ?? "");
                 break;
             case MessageType.SpatialMapAck:
@@ -278,7 +280,7 @@ public sealed class WireMessage
             MessageType.ScreenStop or MessageType.ScreenAck => new WireMessage { Type = type },
             MessageType.CameraFrame or MessageType.Voice => new WireMessage { Type = type, Data = ReadBytes(r) },
             MessageType.ScreenTile => new WireMessage { Type = type, Index = r.ReadInt32(), Width = r.ReadInt32(), Height = r.ReadInt32(), Data = ReadBytes(r) },
-            MessageType.ScreenRemoval or MessageType.ScreenWatch or MessageType.ShareOffer or MessageType.ShareFetch or MessageType.Chat or MessageType.Probe or MessageType.FileList or MessageType.FileCommand => new WireMessage { Type = type, Text = r.ReadString() },
+            MessageType.ScreenRemoval or MessageType.ScreenWatch or MessageType.ShareOffer or MessageType.ShareFetch or MessageType.Chat or MessageType.Probe or MessageType.FileList or MessageType.FileCommand or MessageType.Profile => new WireMessage { Type = type, Text = r.ReadString() },
             MessageType.Join => new WireMessage { Type = type, Text = r.ReadString() },
             MessageType.JoinResult => new WireMessage { Type = type, Accepted = r.ReadBoolean(), Text = r.ReadString() },
             MessageType.Management => new WireMessage { Type = type, Accepted = r.ReadBoolean() },

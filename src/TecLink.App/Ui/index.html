@@ -1,10 +1,10 @@
 <!doctype html>
 <html lang="es">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TecLink · Pantallas</title><link rel="stylesheet" href="panel.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TecLink · Pantallas</title><link rel="stylesheet" href="panel.css"><link rel="stylesheet" href="skins.css"></head>
 <body>
 <header class="topbar">
   <div class="brand"><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="4" width="19" height="14" rx="3"/><rect x="12" y="14" width="18" height="14" rx="3"/><path d="M7 23h9M23 9h6"/></svg><div><strong>Tec<span>Link</span></strong><span>TechnoCrazy · Teclado y ratón compartidos</span></div></div>
-  <div class="header-actions"><span id="connection" class="connection"><i></i>Conectando…</span><button id="settings-open" class="gear" aria-label="Configuración" aria-haspopup="dialog" title="Configuración"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg></button></div>
+  <div class="header-actions"><span id="connection" class="connection"><i></i>Conectando…</span><button id="notif-open" class="gear bell" aria-label="Notificaciones" aria-haspopup="dialog" title="Notificaciones"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9a6 6 0 0112 0c0 6 2 7 2 7H4s2-1 2-7M10 20a2 2 0 004 0"/></svg><b id="notif-badge" hidden>0</b></button><button id="settings-open" class="gear" aria-label="Configuración" aria-haspopup="dialog" title="Configuración"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg></button></div>
 </header>
 <div class="shell">
 <main>
@@ -52,14 +52,16 @@
       <button id="room-lock" class="tool" type="button" aria-pressed="false" title="Fija las tarjetas para que no se muevan. Tócalo otra vez para liberarlas."><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg><span>Fijar tarjetas</span></button>
       <button id="room-show" class="secondary" type="button" hidden>Mostrar ocultas</button>
       <div class="mini-tools" role="group" aria-label="Ajustes rápidos de mi cámara y micrófono">
-        <button class="mini" type="button" data-cam-cutout aria-pressed="true" disabled title="Quitar el fondo de mi cámara">Quitar fondo</button>
-        <button class="mini" type="button" data-cam-mirror aria-pressed="true" disabled title="Verme como en un espejo">Espejo</button>
+        <button class="ctl-switch mini-switch" type="button" role="switch" aria-checked="true" data-cam-cutout disabled title="Quitar el fondo de mi cámara"><span class="track" aria-hidden="true"><span class="thumb"></span></span><span class="sw-label">Quitar fondo</span></button>
+        <button class="ctl-switch mini-switch" type="button" role="switch" aria-checked="true" data-cam-mirror disabled title="Verme como en un espejo"><span class="track" aria-hidden="true"><span class="thumb"></span></span><span class="sw-label">Espejo</span></button>
         <span class="mini-meter" title="Nivel de mi micrófono" aria-hidden="true"><i></i></span>
       </div>
       <span class="toolbar-gap"></span>
+      <button id="room-cinema" class="tool" type="button" aria-pressed="false" title="Muestra todas las tarjetas visibles a pantalla completa, divididas como las tienes. Esc para salir."><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg><span>Pantalla completa</span></button>
       <button class="tool" type="button" data-cam-switch aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3"/></svg><span>Cámara</span></button>
       <button class="tool" type="button" data-mic-switch aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3"/></svg><span>Micrófono</span></button>
     </div>
+    <div id="cinema-bar" class="cinema-bar" hidden><button id="cinema-exit" class="primary" type="button">Salir de pantalla completa</button><span>o pulsa Esc</span></div>
     <div id="room-hidden" class="room-hidden" hidden></div>
     <div id="room" class="room" aria-label="Sala: pantallas en vivo y cámaras"></div>
     <p class="map-note">Arrastra una tarjeta por su barra superior y cambia su tamaño desde la esquina. Ocultar solo la quita de tu vista. Quitar una pantalla de la sala solo lo puede pedir el dueño, y la otra persona debe aceptarlo.</p>
@@ -87,10 +89,11 @@
         <label class="field-label" for="join-code">Código de la sesión</label>
         <input id="join-code" type="text" inputmode="text" autocomplete="off" autocapitalize="characters" maxlength="7" placeholder="ABC-DEF" spellcheck="false">
         <details class="join-more"><summary>Si no la encuentra sola</summary><label class="field-label" for="join-address">Dirección de la otra PC (opcional)</label><input id="join-address" type="text" inputmode="decimal" autocomplete="off" placeholder="192.168.1.20" spellcheck="false"><p class="map-note">Aparece debajo del código en la otra PC.</p></details>
-        <div class="file-actions"><button id="join-btn" class="secondary">Unirme</button><button id="leave-btn" class="secondary" hidden>Salir de la sesión</button></div>
+        <div class="file-actions"><button id="join-btn" class="secondary">Unirme</button><button id="save-room" class="secondary" hidden title="Guarda esta sala en tu PC para volver a pedir entrada cuando quieras">Guardar esta sala</button><button id="leave-btn" class="secondary" hidden>Salir de la sesión</button></div>
         <p id="join-notice" class="map-warning" role="alert"></p>
       </div></section>
     </div>
+    <section class="panel" aria-labelledby="rooms-title"><div class="section-head"><h2 id="rooms-title">Mis salas guardadas</h2><button id="rooms-check" class="secondary" title="Busca en tu red cuáles de estas salas están abiertas ahora">Ver cuáles están activas</button></div><div class="card-body"><p id="rooms-note" class="map-note">Guarda una sala cuando estés dentro. Al volver, si su dueño está activo, le llega tu solicitud y él decide si te deja entrar.</p><ul id="rooms-list" class="rooms"></ul></div></section>
     <section class="panel" aria-labelledby="grid-title"><div class="section-head"><h2 id="grid-title">Pantallas de la sesión</h2><span id="screen-count" class="small-tag">0 de 10</span></div><div class="card-body"><div id="screen-grid" class="screen-grid" role="list"></div><p id="grid-note" class="map-note"></p></div></section>
     <section class="panel" aria-labelledby="diag-title"><div class="section-head"><h2 id="diag-title">¿No conecta? Arréglalo aquí</h2></div><div class="card-body"><p>«Reparar conexión» permite TecLink en el Firewall de Windows (te pedirá permiso una vez) y revisa tu red. Hazlo en las dos PCs si no se encuentran.</p><div class="file-actions"><button id="repair-run" class="primary">Reparar conexión</button><button id="diag-run" class="secondary">Solo probar</button><button id="diag-copy" class="secondary" hidden>Copiar informe</button></div><pre id="diag-out" class="diag-out" hidden role="status" aria-live="polite"></pre></div></section>
     <details class="panel connection-details"><summary>Detalles técnicos</summary><h2 id="connection-title">Esperando conexión</h2><dl><div><dt>Esta PC</dt><dd id="detail-name">—</dd></div><div><dt>Otra PC</dt><dd id="detail-remote">—</dd></div><div><dt>Modo de conexión</dt><dd id="detail-role">—</dd></div><div><dt>Dirección de la otra PC</dt><dd id="detail-host">—</dd></div><div><dt>Puerto</dt><dd id="detail-port">—</dd></div></dl><p id="detail-status" class="muted"></p><p class="map-note">El atajo Ctrl + Alt + Espacio permite cambiar de mando en cualquier momento.</p></details>
@@ -98,10 +101,28 @@
   <footer id="savebar" class="savebar"><div><strong id="save-heading">Tu mapa, a tu manera</strong><span id="save-message" aria-live="polite">Los cambios se aplican al guardar.</span></div><button id="save" class="primary">Guardar mapa <span aria-hidden="true">↗</span></button></footer>
 </main>
 </div>
+<section id="notif-pop" role="dialog" aria-labelledby="notif-title" hidden><div class="drawer-head"><h2 id="notif-title">Notificaciones</h2><button id="notif-close" class="secondary" aria-label="Cerrar notificaciones">✕</button></div><div id="notif-list" class="notif-list"></div></section>
+<div id="profile-scrim" hidden></div>
+<section id="profile" role="dialog" aria-modal="true" aria-labelledby="profile-title" hidden>
+  <h2 id="profile-title">Tu perfil</h2>
+  <p>Así te ven las personas de la sala. Se guarda solo en esta PC, no en ningún servidor.</p>
+  <div class="profile-photo"><i id="profile-avatar" class="avatar big" aria-hidden="true"></i><div class="file-actions"><button id="profile-pick" class="secondary" type="button">Elegir foto</button><button id="profile-remove" class="secondary" type="button">Quitar foto</button></div><input id="profile-file" type="file" accept="image/*" hidden></div>
+  <label class="field-label" for="profile-name">Tu nombre</label><input id="profile-name" type="text" maxlength="32" autocomplete="off" placeholder="Por ejemplo: Rafael">
+  <label class="field-label" for="profile-pc">Nombre de tu computadora</label><input id="profile-pc" type="text" maxlength="32" autocomplete="off" placeholder="Por ejemplo: Laptop de Rafael">
+  <p class="map-note">Si no pones un nombre, se usa el de la computadora. Cámbialo aquí si aparecen letras y números raros.</p>
+  <div class="file-actions"><button id="profile-save" class="primary" type="button">Guardar</button><button id="profile-cancel" class="secondary" type="button">Cancelar</button></div>
+</section>
 <div id="settings-scrim" hidden></div>
 <aside id="settings-drawer" role="dialog" aria-modal="true" aria-labelledby="settings-drawer-title" hidden>
   <div class="drawer-head"><h2 id="settings-drawer-title">Configuración</h2><button id="settings-close" class="secondary" aria-label="Cerrar configuración">✕</button></div>
   <div class="drawer-body">
+    <section class="panel" aria-labelledby="skin-title"><div class="section-head"><h2 id="skin-title">Diseños</h2><span id="skin-name" class="small-tag">Original</span></div><div class="card-body">
+      <div class="skin-carousel"><button id="skin-prev" class="secondary" type="button" aria-label="Diseños anteriores">‹</button><div id="skin-track" class="skin-track" role="radiogroup" aria-label="Diseño de la plataforma"></div><button id="skin-next" class="secondary" type="button" aria-label="Diseños siguientes">›</button></div>
+      <label class="field-label" for="skin-tone">Tono del diseño <span id="skin-tone-val" class="small-tag">0°</span></label><input id="skin-tone" type="range" min="-180" max="180" step="5" value="0"><div class="range-ends"><span>Frío</span><span>Original</span><span>Cálido</span></div>
+      <label class="field-label" for="skin-light">Brillo <span id="skin-light-val" class="small-tag">0</span></label><input id="skin-light" type="range" min="-12" max="12" step="1" value="0"><div class="range-ends"><span>Más oscuro</span><span>Normal</span><span>Más claro</span></div>
+      <button id="skin-reset" class="secondary" type="button">Restablecer el tono de este diseño</button>
+      <p class="map-note">Cada diseño tiene su propio material. El tono lo cambia sin perder la textura. Se guarda en esta PC.</p>
+    </div></section>
     <section class="panel" aria-labelledby="look-title"><div class="section-head"><h2 id="look-title">Apariencia de la plataforma</h2></div><div class="card-body">
       <label class="field-label" for="theme">Tema</label><select id="theme" aria-label="Tema de la interfaz"><option value="system">Tema del sistema</option><option value="dark">Tema oscuro</option><option value="light">Tema claro</option></select>
       <div class="color-grid">
@@ -125,5 +146,5 @@
 <div id="consent-scrim" hidden></div>
 <section id="consent" role="alertdialog" aria-modal="true" aria-labelledby="consent-title" hidden><h2 id="consent-title">¿Quitar tu pantalla de la sala?</h2><p id="consent-text"></p><div class="file-actions"><button id="consent-no" class="primary">No, dejarla</button><button id="consent-yes" class="secondary danger">Sí, quitarla</button></div></section>
 <div id="toast" role="status" aria-live="polite"></div>
-<script src="map.js"></script><script src="room.js"></script><script src="chat.js"></script><script src="panel.js"></script>
+<script src="skins.js"></script><script src="map.js"></script><script src="room.js"></script><script src="chat.js"></script><script src="social.js"></script><script src="panel.js"></script>
 </body></html>

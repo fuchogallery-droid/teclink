@@ -38,7 +38,8 @@ public enum MessageType : byte
     ScreenTile = 35,      // one small live picture of a monitor (Index, Width/Height of the real monitor, JPEG)
     ShareOffer = 36,      // JSON {id,name,size,isDirectory}: a file was shared with the session
     ShareFetch = 37,      // "<id>": send me that shared file now
-    Leave = 30,          // the sender is leaving the session on purpose (not a dropped link)
+    Profile = 38,         // JSON {name,pc,avatar}: how this person wants to appear in the room
+    Leave = 30,         // the sender is leaving the session on purpose (not a dropped link)
 }
 
 public enum MouseButtonKind : byte

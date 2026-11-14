@@ -54,9 +54,11 @@ public sealed class HostAdmission : IAsyncDisposable
     /// <summary>(remote address, reason) for connections that did not get in.</summary>
     public event Action<string, string>? Refused;
 
-    public HostAdmission(int port, Func<string?> expectedCode, TimeSpan joinTimeout, CancellationToken ct)
+    private readonly Func<bool>? _isBusy;
+
+    public HostAdmission(int port, Func<string?> expectedCode, TimeSpan joinTimeout, CancellationToken ct, Func<bool>? isBusy = null)
     {
-        _expectedCode = expectedCode; _timeout = joinTimeout;
+        _expectedCode = expectedCode; _timeout = joinTimeout; _isBusy = isBusy;
         _listener = new TcpListener(IPAddress.Any, port);
         _listener.Start();
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -107,7 +109,16 @@ public sealed class HostAdmission : IAsyncDisposable
             catch (TaskCanceledException) { await connection.DisposeAsync(); return; }
 
             var expected = SessionDiscovery.Normalize(_expectedCode());
-            if (expected is null || SessionDiscovery.Normalize(join.Text) != expected)
+            // "CODE" or "CODE\u001fask\u001fNAME": a returning guest asks permission instead of presenting a fresh invitation.
+            var parts = (join.Text ?? "").Split('\u001f');
+            if (parts.Length > 1 && parts[1] == "ask" && _isBusy?.Invoke() == true && expected is not null && SessionDiscovery.Normalize(parts[0]) == expected)
+            {
+                await connection.SendAsync(WireMessage.JoinResult(false, "Quien abrió la sala está ahora mismo con otra persona. Inténtalo más tarde."));
+                await Task.Delay(300, ct);
+                await connection.DisposeAsync();
+                return;
+            }
+            if (expected is null || SessionDiscovery.Normalize(parts[0]) != expected)
             {
                 await connection.SendAsync(WireMessage.JoinResult(false, "Código incorrecto"));
                 await Task.Delay(300, ct);

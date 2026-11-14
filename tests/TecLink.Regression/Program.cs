@@ -52,6 +52,10 @@ Check(single.IsExitEdge(new Point(0, 500), false), "Legacy left edge still works
 Check(!single.IsExitEdge(new Point(2, 500), false), "Screen interior is not edge");
 var hello = WireMessage.Decode(WireMessage.Hello("jenav", desktop.Bounds.Width, desktop.Bounds.Height).Encode());
 Check(hello.ScreenWidth == 4400 && hello.ScreenHeight == 3560, "Existing Hello protocol carries virtual dimensions");
+var profile = WireMessage.Decode(WireMessage.ProfileMsg("{\"name\":\"Rafael\",\"pc\":\"Laptop\",\"avatar\":\"\"}").Encode());
+Check(profile.Type == MessageType.Profile && profile.Text!.Contains("Rafael"), "Profile message round trip");
+var askJoin = WireMessage.Decode(WireMessage.Join("ABC123\u001fask\u001fAna").Encode());
+Check(askJoin.Text!.Split('\u001f')[1] == "ask" && askJoin.Text.Split('\u001f')[2] == "Ana", "Join request carries the name");
 var mouse = WireMessage.Decode(WireMessage.MouseMove(2159, 1159).Encode());
 Check(mouse.X == 2159 && mouse.Y == 1159, "Mouse protocol remains byte-compatible");
 var screenInfo = monitors.Select((r, n) => new DisplayInfo("display" + n, r.Left, r.Top, r.Width, r.Height)).ToArray();

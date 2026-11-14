@@ -234,6 +234,7 @@ public sealed partial class EdgeBridge : IDisposable
         if (address.Length > 0 && (address.Length > 253 || !address.All(c => char.IsLetterOrDigit(c) || c is '.' or '-')))
             throw new ArgumentException("La dirección solo puede tener números, letras, puntos y guiones. Ejemplo: 192.168.1.20");
         _config.Role = PeerRole.Client; _config.JoinCode = clean; _joinNotice = ""; _joinRefused = false;
+        _askedToJoin = _nextJoinAsk; _nextJoinAsk = false;
         if (address.Length > 0) _config.PeerHost = address; // fallback when the network blocks the automatic search
         _config.Save();
         _joinNotice = "";
@@ -405,7 +406,7 @@ public sealed partial class EdgeBridge : IDisposable
     public void ClearRemote()
     {
         _remoteDisplays = Array.Empty<DisplayInfo>();
-        _remoteName = "Otra PC"; _remoteKnown = false; _peerMapSupported = false; _peerExtras = false; _peerStatus = "none";
+        _remoteName = "Otra PC"; _remoteKnown = false; _peerMapSupported = false; ResetRemoteProfile(); _peerExtras = false; _peerStatus = "none";
         _spatialValid = false; _spatialLocal = new(); _spatialRemote = new(); _activeRoute = null;
         ClearSuite();
         if (_config.ScreenPositions.Any(p => p.Remote))
@@ -419,12 +420,20 @@ public sealed partial class EdgeBridge : IDisposable
     private void HandleJoin(WireMessage msg)
     {
         if (_connection is not { } conn) return;
-        if (SessionDiscovery.Normalize(msg.Text) != SessionDiscovery.Normalize(_config.SessionCode))
+        var parts = (msg.Text ?? "").Split(Sep);
+        if (SessionDiscovery.Normalize(parts[0]) != SessionDiscovery.Normalize(_config.SessionCode))
         {
             _ = conn.SendAsync(WireMessage.JoinResult(false, "Código incorrecto"));
             _ = Task.Delay(400).ContinueWith(_ => _dropCurrent?.Invoke());
             return;
         }
+        // A returning guest does not get in by itself: the owner is asked first (notifications, next to the gear).
+        if (parts.Length > 1 && parts[1] == "ask") { RequestJoin(conn, parts.Length > 2 ? parts[2] : ""); return; }
+        AcceptJoin(conn);
+    }
+
+    private void AcceptJoin(PeerConnection conn)
+    {
         _joined = true; _sessionMode = true;
         _ = conn.SendAsync(WireMessage.JoinResult(true));
         _ = conn.SendAsync(WireMessage.Management(_management));
@@ -505,7 +514,7 @@ public sealed partial class EdgeBridge : IDisposable
             }
 
             _connection = connection;
-            _remoteKnown = false;
+            _remoteKnown = false; _joinRequest = null; ResetRemoteProfile();
             _joined = false; _joinAnswered = false;
             if (_config.Role == PeerRole.Client) _management = false; // a host's switch survives guests coming and going
             _sessionMode = _config.Role == PeerRole.Server || guestCode is not null;
@@ -522,7 +531,7 @@ public sealed partial class EdgeBridge : IDisposable
                 StatusChanged?.Invoke("Conectado — enviando identificación...");
                 if (guestCode is not null)
                 {
-                    await connection.SendAsync(WireMessage.Join(guestCode));
+                    await connection.SendAsync(WireMessage.Join(_askedToJoin ? guestCode + Sep + "ask" + Sep + OwnName : guestCode));
                     // An older host never answers: treat the link as a legacy direct one.
                     _ = Task.Delay(2500).ContinueWith(_ => { if (_connection == connection && !_joinAnswered) _sessionMode = false; });
                 }
@@ -542,7 +551,7 @@ public sealed partial class EdgeBridge : IDisposable
 
             if (_peerStatus == "connected") _peerStatus = "lost";
             StatusChanged?.Invoke(ct.IsCancellationRequested ? "TecLink apagado" : _peerStatus == "left" ? $"{_remoteName} salió de la sesión." : _peerStatus == "lost" ? $"{_remoteName} se desconectó." : "Conexión perdida. Reintentando...");
-            _connection = null;
+            _connection = null; _joinRequest = null;
             _remoteKnown = false;
             _peerControlling = false;
             _peerExtras = false;
@@ -574,7 +583,7 @@ public sealed partial class EdgeBridge : IDisposable
 
     private HostAdmission CreateAdmission(CancellationToken ct)
     {
-        var admission = new HostAdmission(_config.Port, () => _config.SessionCode, TimeSpan.FromSeconds(5), ct);
+        var admission = new HostAdmission(_config.Port, () => _config.SessionCode, TimeSpan.FromSeconds(5), ct, () => _joined && _remoteKnown && _connection is not null);
         admission.Refused += (who, why) => { Logger.Info($"Conexión de {who} rechazada: {why}."); if (why.StartsWith("código")) StatusChanged?.Invoke($"Alguien en {who} intentó entrar con un código incorrecto."); };
         return admission;
     }
@@ -622,7 +631,8 @@ public sealed partial class EdgeBridge : IDisposable
                 _remoteWidth = msg.ScreenWidth;
                 _remoteHeight = msg.ScreenHeight;
                 _remoteKnown = true; _peerStatus = "connected";
-                _remoteName = msg.MachineName ?? "Otra PC";
+                _remotePc = msg.MachineName ?? "Otra PC";
+                _remoteName = _remoteProfileName ?? _remotePc;
                 _remoteDisplays = msg.Displays.Length > 0 ? msg.Displays
                     : new[] { new DisplayInfo("desktop", 0, 0, _remoteWidth, _remoteHeight) };
                 _peerMapSupported = msg.SupportsSpatialMap;
@@ -641,11 +651,25 @@ public sealed partial class EdgeBridge : IDisposable
                 if (_peerMapSupported && _config.UseSpatialMap && _spatialValid &&
                     (_config.Role == PeerRole.Server || (!_sessionMode && !msg.HasSpatialMap)))
                     _ = _connection!.SendAsync(WireMessage.Map(Guid.NewGuid().ToString("N"), _config.ScreenPositions.ToArray()));
-                StatusChanged?.Invoke($"Vinculado con {msg.MachineName} ({_remoteWidth}x{_remoteHeight})");
+                StatusChanged?.Invoke($"Vinculado con {_remoteName} ({_remoteWidth}x{_remoteHeight})");
+                SendProfile();
+                break;
+            case MessageType.Profile:
+                HandleProfile(msg.Text);
                 break;
             case MessageType.JoinResult:
                 _joinAnswered = true;
-                if (msg.Accepted) { _joinNotice = ""; _sessionMode = true; }
+                if (msg.Accepted)
+                {
+                    _joinNotice = ""; _sessionMode = true;
+                    // The host ignored everything sent while it was still deciding: introduce ourselves again.
+                    if (_askedToJoin && _connection is { } accepted) { _ = SendDesktopAsync(accepted); SendProfile(); }
+                }
+                else if (msg.Text?.StartsWith("wait:", StringComparison.Ordinal) == true)
+                {
+                    _joinNotice = msg.Text[5..];
+                    StatusChanged?.Invoke(_joinNotice);
+                }
                 else
                 {
                     _joinNotice = string.IsNullOrWhiteSpace(msg.Text) ? "La sesión no te aceptó." : msg.Text!;
@@ -1041,7 +1065,9 @@ public sealed partial class EdgeBridge : IDisposable
         var order = _config.ScreenOrder;
         return new
         {
-            machineName = _config.MachineName, remoteName = _remoteName,
+            machineName = OwnName, remoteName = _remoteName, remoteAvatar = _remoteAvatar ?? "", remotePc = _remotePc ?? "",
+            profile = ProfileView(), notifications = NotificationsView(), savedRooms = SavedRoomsView(), canSaveRoom = CanSaveRoom,
+            joinedByAsk = _askedToJoin,
             connected = _connection is not null && _remoteKnown,
             mode = _mode == BridgeMode.Remote ? "remote" : _peerControlling ? "peer" : "local", status,
             automatic = _config.AutomaticSwitching, theme = _config.Theme, powered = Powered,

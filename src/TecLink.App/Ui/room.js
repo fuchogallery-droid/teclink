@@ -60,11 +60,28 @@
     save(); signature = ''; render();
   }
 
+  // Pantalla completa de toda la sala: las tarjetas visibles se reparten TODA la ventana con la division elegida (Auto, 1, 2, 3, 4).
+  let cinema = false, cinemaSlots = {};
+  function computeCinema(list) {
+    const shown = list.filter(i => i.kind === 'screen'), W = room().clientWidth, H = room().clientHeight; cinemaSlots = {};
+    if (!shown.length || !W || !H) return;
+    const gap = 8, cols = Math.min(shown.length, store.cols || Math.ceil(Math.sqrt(shown.length))), rows = Math.ceil(shown.length / cols);
+    const w = Math.floor((W - gap * (cols + 1)) / cols), h = Math.floor((H - gap * (rows + 1)) / rows);
+    shown.forEach((item, i) => { cinemaSlots[item.key] = { x: gap + (i % cols) * (w + gap), y: gap + Math.floor(i / cols) * (h + gap), w, h, z: 1 }; });
+  }
+  function setCinema(on) {
+    if (cinema === on) return;
+    cinema = on; document.body.classList.toggle('cinema', on); $('cinema-bar').hidden = !on; $('room-cinema').setAttribute('aria-pressed', on);
+    api.send({ type: 'roomFullscreen', on }); signature = ''; lastWatch = '';
+    if (on) { full = null; if (control) setControl(null); }
+    requestAnimationFrame(() => render(undefined, true));
+  }
   function apply(node, key) {
-    const l = layout()[key]; if (!l) return;
+    const l = (cinema && cinemaSlots[key]) || layout()[key]; if (!l) return;
     Object.assign(node.style, { left: l.x + 'px', top: l.y + 'px', width: l.w + 'px', height: l.h + 'px', zIndex: l.z });
   }
   function fitRoom() {
+    if (cinema) { room().style.minHeight = '100vh'; return; }
     const bottom = Math.max(420, ...[...room().children].map(n => { const l = layout()[n.dataset.key]; return l ? l.y + l.h + 24 : 0; }));
     room().style.minHeight = (full ? Math.max(bottom, Math.round(innerHeight * .62)) : bottom) + 'px';
   }
@@ -145,7 +162,7 @@
   function scaleBubble(key, node, k) { const l = layout()[key], s = Math.round(Math.min(480, Math.max(MIN.bubble[0], l.w * k))); l.w = l.h = s; apply(node, key); save(); fitRoom(); }
 
   function startDrag(e, node, key, mode) {
-    if (e.button !== 0 || store.locked || full) return;
+    if (e.button !== 0 || store.locked || full || cinema) return;
     e.preventDefault(); e.stopPropagation();
     const l = layout()[key], start = { x: e.clientX, y: e.clientY, l: { ...l } }, bubble = node.classList.contains('bubble'), id = e.pointerId;
     l.z = ++top + (bubble ? 1000 : 0); node.style.zIndex = l.z;
@@ -167,6 +184,7 @@
     if (full && !screens().some(i => i.key === full)) full = null;
     if (control && (!canSee() || !screens().some(i => i.key === control))) { control = null; api.send({ type: 'tileControl', on: false }); }
     const list = items(); if (!place(list)) { syncWatch(); return; }
+    if (cinema) computeCinema(list);
     const sig = list.map(i => i.key).join('|') + '#' + (full || '') + '#' + docked;
     if (sig !== signature || force) {
       signature = sig; room().replaceChildren();
@@ -197,6 +215,7 @@
         node.classList.toggle('cutout', item.mine ? cam.cutout : peer.cutout); node.classList.toggle('mirror', item.mine && cam.mirror);
       }
     }
+    if (cinema) for (const item of list) { const node = room().querySelector(`[data-key="${CSS.escape(item.key)}"]`); if (node) apply(node, item.key); }
     video.hidden = !!(cam.cutout && cam.seg); own.hidden = !(cam.cutout && cam.seg);
     fitRoom(); syncWatch();
   }
@@ -229,8 +248,8 @@
     set('cam-cutout', cam.cutout, `Quitar fondo: ${cam.cutout ? 'sí' : 'no'}`);
     set('cam-mirror', cam.mirror, `Espejo: ${cam.mirror ? 'sí' : 'no'}`);
     $('cam-cutout').disabled = $('cam-mirror').disabled = !cam.on;
-    document.querySelectorAll('[data-cam-cutout]').forEach(b => { b.disabled = !cam.on; b.setAttribute('aria-pressed', cam.cutout); b.classList.toggle('on', cam.cutout); });
-    document.querySelectorAll('[data-cam-mirror]').forEach(b => { b.disabled = !cam.on; b.setAttribute('aria-pressed', cam.mirror); b.classList.toggle('on', cam.mirror); });
+    document.querySelectorAll('[data-cam-cutout]').forEach(b => { b.disabled = !cam.on; b.setAttribute('aria-checked', cam.cutout); });
+    document.querySelectorAll('[data-cam-mirror]').forEach(b => { b.disabled = !cam.on; b.setAttribute('aria-checked', cam.mirror); });
     document.querySelectorAll('[data-cam-switch]').forEach(b => { b.setAttribute('aria-pressed', cam.on); b.classList.toggle('on', cam.on); const l = b.querySelector('span'); if (l) l.textContent = cam.on ? 'Cámara encendida' : 'Cámara'; });
     const hidden = state ? screens().filter(i => layout()[i.key]?.hidden).length : 0;
     $('room-show').hidden = !hidden; $('room-show').textContent = `Mostrar ocultas (${hidden})`;
@@ -349,7 +368,9 @@
     document.querySelectorAll('[data-cols]').forEach(b => b.onclick = () => arrange(Number(b.dataset.cols)));
     $('room-lock').onclick = () => { store.locked = !store.locked; save(); render(); api.toast(store.locked ? 'Tarjetas fijas: no se mueven hasta que toques el candado otra vez.' : 'Tarjetas liberadas: ya puedes moverlas.'); };
     $('room-show').onclick = () => { Object.values(layout()).forEach(l => delete l.hidden); save(); signature = ''; render(); };
-    addEventListener('keydown', e => { if (e.key === 'Escape' && full && !control) setFull(null); });
+    $('room-cinema').onclick = () => setCinema(!cinema);
+    $('cinema-exit').onclick = () => setCinema(false);
+    addEventListener('keydown', e => { if (e.key === 'Escape' && cinema && !control) setCinema(false); else if (e.key === 'Escape' && full && !control) setFull(null); });
     document.addEventListener('visibilitychange', () => { lastWatch = ''; syncWatch(); });
     let lastW = 0;
     new ResizeObserver(() => {
@@ -364,7 +385,7 @@
   }
   window.TecRoom = {
     init, render, peerFrame, tile, controlOff,
-    setActive(value) { active = value; lastWatch = ''; if (!value && control) setControl(null); if (state) render(undefined, true); },
+    setActive(value) { active = value; lastWatch = ''; if (!value) setCinema(false); if (!value && control) setControl(null); if (state) render(undefined, true); },
     setDocked(value) { docked = value; signature = ''; camSignature = ''; if (state) render(); },
     shown() { lastWatch = ''; syncWatch(); },
     toggleCamera: () => setCamera(!cam.on), camOn: () => cam.on,

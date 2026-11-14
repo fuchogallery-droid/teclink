@@ -19,6 +19,7 @@
     if (message.type === 'controlOff') { TecRoom.controlOff(); return; }
     if (message.type === 'shown') { TecRoom.shown(); return; }
     if (message.type === 'removeAsk') { askConsent(message); return; }
+    if (message.type === 'roomsPresence') { TecSocial.roomsPresence(message.found); return; }
     if (message.type === 'myFiles' || message.type === 'peerFiles') return;
     if (message.type === 'chat') { TecChat.incoming(message.from, message.text, message.at); return; }
     if (message.type === 'voice') { TecChat.voice(message.data); return; }
@@ -115,7 +116,7 @@
     $('restore-screens').hidden = !removed || !admin; $('restore-screens').textContent = `Restaurar pantallas quitadas (${removed})`;
     $('remove-screen').disabled = !(admin && s && s.remote && state.connected) || saving;
     $('remove-note').textContent = !admin ? 'Solo el dueño de la sala puede quitar pantallas.' : s && !s.remote ? 'Las pantallas propias no se pueden quitar: solo las de invitados.' : 'Se quita cuando la otra persona lo acepta.'; $('remove-screen').textContent = removeArmed === selected ? '¿Seguro? Pulsa otra vez' : 'Quitar esta pantalla';
-    TecRoom.render(state); TecChat.render(state); renderMembers(); renderShares();
+    TecRoom.render(state); TecChat.render(state); TecSocial.render(state); renderMembers(); renderShares();
     $('savebar').hidden = !arrange || $('screens-tab').hidden;
     $('save').disabled = saving || overlaps; $('save').textContent = saving ? 'Guardando…' : dirty ? 'Guardar mapa' : 'Mapa guardado';
     $('save-heading').textContent = dirty ? 'Cambios sin guardar' : 'Mapa actual'; $('save-message').textContent = saving ? 'Aplicando en las dos PCs…' : overlaps ? 'Separa las pantallas que se superponen.' : 'Los cambios se guardan solos.';
@@ -178,18 +179,25 @@
   const size = n => n >= 1 << 30 ? (n / (1 << 30)).toFixed(1) + ' GB' : n >= 1 << 20 ? (n / (1 << 20)).toFixed(1) + ' MB' : n >= 1024 ? Math.round(n / 1024) + ' KB' : n + ' B';
   function people() {
     const host = state.role === 'Server', inSession = state.netMode !== 'idle', shown = (state.remote || []).length > 0;
-    const list = [{ who: 'me', name: state.machineName, tag: 'Tú', role: !inSession ? 'Sin sesión' : host ? 'Dueño de la sala' : 'Invitado', screens: state.local || [], on: true,
+    const list = [{ who: 'me', name: state.machineName, avatar: state.profile?.avatar || '', pc: state.profile?.pc || '', tag: 'Tú', role: !inSession ? 'Sin sesión' : host ? 'Dueño de la sala' : 'Invitado', screens: state.local || [], on: true,
       status: state.mode === 'remote' ? 'Controlando la otra PC' : state.mode === 'peer' ? 'La otra PC maneja esta' : 'Mouse en esta PC' }];
-    if (state.connected || shown) list.push({ who: 'peer', name: state.remoteName || 'Otra PC', tag: '', role: host ? 'Invitado' : 'Dueño de la sala', screens: state.remote || [], on: !!state.connected,
+    if (state.connected || shown) list.push({ who: 'peer', name: state.remoteName || 'Otra PC', avatar: state.remoteAvatar || '', pc: state.remotePc || '', tag: '', role: host ? 'Invitado' : 'Dueño de la sala', screens: state.remote || [], on: !!state.connected,
       status: state.connected ? 'Conectada' : state.peerStatus === 'left' ? 'Salió de la sesión' : 'Desconectada' });
     return list;
   }
   function memberCard(m) {
     const li = document.createElement('li'), av = document.createElement('i'), box = document.createElement('div'), name = document.createElement('strong'), role = document.createElement('small'), data = document.createElement('small'), st = document.createElement('small');
-    li.className = 'member' + (m.on ? '' : ' offline'); av.className = 'avatar'; av.textContent = (m.name || '?').slice(0, 2).toUpperCase(); av.setAttribute('aria-hidden', 'true');
+    li.className = 'member' + (m.on ? '' : ' offline'); av.className = 'avatar'; TecSocial.paint(av, m.avatar, m.name); av.setAttribute('aria-hidden', 'true');
     name.textContent = m.name + (m.tag ? ` (${m.tag})` : ''); role.className = 'role'; role.textContent = m.role;
+    if (m.who === 'me') {
+      av.classList.add('mine'); av.setAttribute('role', 'button'); av.tabIndex = 0; av.removeAttribute('aria-hidden'); av.setAttribute('aria-label', 'Editar mi perfil: nombre y foto'); av.title = 'Toca para cambiar tu nombre y tu foto';
+      av.onclick = () => TecSocial.openProfile(true); av.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); TecSocial.openProfile(true); } };
+    }
     data.textContent = `${m.screens.length} ${m.screens.length === 1 ? 'pantalla' : 'pantallas'}${m.screens.length ? ' · ' + m.screens.map(d => `${d.width}×${d.height}`).join(', ') : ''}`;
-    st.className = 'state'; st.textContent = m.status; box.append(name, role, data, st); li.append(av, box); return li;
+    st.className = 'state'; st.textContent = m.status; box.append(name, role, data, st);
+    if (m.pc && m.pc !== m.name) { const pc = document.createElement('small'); pc.textContent = 'Computadora: ' + m.pc; box.append(pc); }
+    if (m.who === 'me') { const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'edit-hint'; edit.textContent = 'Editar mi nombre y foto'; edit.onclick = () => TecSocial.openProfile(true); box.append(edit); }
+    li.append(av, box); return li;
   }
   let membersSig = '', shareFilter = null, sharesSig = '';
   function renderMembers() {
@@ -321,6 +329,7 @@
   $('restore-screens').onclick = () => { draft.placements.forEach(p => { delete p.hidden; }); if (M.overlaps(rects())) draft.placements = M.defaults(state); dirty = true; buildNodes(); update(); fit(); autoSave(); toast('Pantallas restauradas.'); };
   const openTab = name => document.querySelector(`[data-tab=${name}]`).click();
   TecChat.init({ send, toast, onOpen: open => { TecRoom.setDocked(open); if (open) openTab('room'); else if (state) update(); } });
+  TecSocial.init({ send, toast });
   TecRoom.init({ send, toast, key: M.key, changed: () => { if (state) update(); } });
   // Botón "Cambiar de pantalla": recorre todas las pantallas (esta PC y la otra).
   $('next-screen').onclick = () => { const all = rects(); if (!all.length) return; const i = all.findIndex(s => M.key(s) === selected); selected = M.key(all[(i + 1) % all.length]); update(); };
@@ -334,8 +343,13 @@
   function applyColors() {
     const c = saved();
     for (const [key, vars] of Object.entries(colorMap)) vars.forEach(v => c[key] ? document.documentElement.style.setProperty(v, c[key]) : document.documentElement.style.removeProperty(v));
-    document.querySelectorAll('[data-var]').forEach(i => { const v = getComputedStyle(document.documentElement).getPropertyValue(colorMap[i.dataset.var][0]).trim(); i.value = c[i.dataset.var] || (/^#[0-9a-f]{6}$/i.test(v) ? v : '#000000'); });
+    // El color real en uso (sea de un diseño o de la paleta base), convertido a #rrggbb para los selectores.
+    const probe = document.createElement('i'); probe.hidden = false; probe.style.cssText = 'position:absolute;width:0;height:0;visibility:hidden'; document.body.append(probe);
+    const hex = v => { probe.style.color = ''; probe.style.color = `var(${v})`; const m = getComputedStyle(probe).color.match(/\d+(\.\d+)?/g); return m ? '#' + m.slice(0, 3).map(n => Math.round(+n).toString(16).padStart(2, '0')).join('') : '#000000'; };
+    document.querySelectorAll('[data-var]').forEach(i => { i.value = c[i.dataset.var] || hex(colorMap[i.dataset.var][0]); });
+    probe.remove();
   }
+  addEventListener('tecskin', () => applyColors());
   document.querySelectorAll('[data-var]').forEach(i => i.oninput = () => { const c = saved(); c[i.dataset.var] = i.value; localStorage.setItem('tecColors', JSON.stringify(c)); applyColors(); });
   $('colors-reset').onclick = () => { localStorage.removeItem('tecColors'); applyColors(); };
   applyColors();

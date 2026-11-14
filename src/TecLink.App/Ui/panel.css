@@ -180,9 +180,10 @@ main>nav.tabs,main>.statusbar{flex:none}
 /* Sala en vivo */
 .room-toolbar{gap:10px}.toolbar-gap{flex:1}
 .mini-tools{display:inline-flex;align-items:center;gap:6px}
-.mini-tools .mini{min-height:30px;padding:0 10px;font-size:12px;border-radius:999px;background:transparent;border:1px solid var(--line);color:inherit}
-.mini-tools .mini.on{border-color:var(--accent);color:var(--accent)}
-.mini-tools .mini:disabled{opacity:.45}
+.mini-switch{min-height:34px;padding:0 12px 0 8px;gap:8px;font-size:12px;color:var(--text)}
+.mini-switch .sw-label{color:var(--text)}
+.mini-switch .track{width:34px;height:20px}.mini-switch .thumb{top:2px;left:2px;width:16px;height:16px}
+.mini-switch[aria-checked="true"] .thumb{left:16px}
 .mini-meter{width:54px;height:6px;border-radius:999px;background:var(--line);overflow:hidden;display:inline-block}
 .mini-meter i{display:block;height:100%;width:0;background:var(--accent);transition:width .08s linear}
 .seg{display:inline-flex}.seg button{min-width:48px;border-radius:0;margin-left:-1px}.seg button:first-child{border-radius:10px 0 0 10px;margin-left:0}.seg button:last-child{border-radius:0 10px 10px 0}
@@ -207,7 +208,7 @@ main>nav.tabs,main>.statusbar{flex:none}
 
 /* Chat acoplado: 30 % de la ventana */
 #chat-bubble{right:16px}
-body.chat-open #chat-bubble{right:calc(30% + 16px)}
+body.chat-open #chat-bubble{display:none}
 #chat-panel{position:static;flex:0 0 30%;min-width:300px;max-width:520px;width:auto;top:auto;right:auto;bottom:auto;border:0;border-left:1px solid var(--line);border-radius:0;box-shadow:none;display:flex;flex-direction:column;background:var(--panel);overflow:hidden;z-index:auto}
 .chat-head{background:var(--raised)}
 .chat-cams{display:grid;grid-template-columns:repeat(var(--cams,2),minmax(0,1fr));gap:8px;padding:10px 12px;border-bottom:1px solid var(--line)}
@@ -256,3 +257,47 @@ details.chat-voice[open]{display:flex;flex-direction:column;gap:8px;max-height:4
 .rc-img{image-rendering:auto}
 .rc-view{background:#050505}
 :root[data-theme=light] .brand strong{color:#171c18}
+
+/* Sala a pantalla completa */
+body.cinema .topbar,body.cinema .tabs,body.cinema .savebar,body.cinema #statusbar{display:none!important}
+body.cinema #room-tab{position:fixed;inset:0;z-index:70;background:#000;padding:0!important;overflow:hidden}
+body.cinema #room-tab>.page-heading,body.cinema .room-toolbar,body.cinema #room-hidden,body.cinema #room-tab>.map-note{display:none!important}
+body.cinema #room{height:100vh;min-height:100vh;border:0;border-radius:0;margin:0;background:#000}
+.cinema-bar{position:fixed;top:0;left:50%;transform:translate(-50%,-100%);z-index:80;display:flex;gap:12px;align-items:center;padding:10px 16px;background:rgba(0,0,0,.82);border:1px solid var(--line);border-radius:0 0 12px 12px;transition:transform .18s;color:#fff;font-size:12px}
+body.cinema .cinema-bar:hover,body.cinema .cinema-bar:focus-within{transform:translate(-50%,0)}
+body.cinema .cinema-bar::after{content:"";position:absolute;left:0;right:0;bottom:-18px;height:18px}
+body.cinema #chat-bubble{display:none}
+
+/* Notificaciones (campana junto a la tuerca) */
+.bell{position:relative}.bell b{position:absolute;top:-4px;right:-4px;min-width:20px;height:20px;border-radius:999px;background:var(--red);color:#fff;font-size:12px;display:grid;place-items:center;padding:0 5px}
+.bell.ring svg{animation:chatPulse 1.2s ease-in-out infinite}
+#notif-pop{position:fixed;top:72px;right:18px;width:min(380px,calc(100vw - 24px));max-height:70vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:12px;z-index:45;box-shadow:0 14px 40px rgba(0,0,0,.5)}
+.notif-list{display:flex;flex-direction:column;gap:10px;padding:12px 16px 16px}
+.notif-item{border:1px solid var(--line);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:10px;background:var(--bg)}
+.notif-item strong{color:var(--text)}.notif-item.request{border-color:var(--accent)}
+.notif-item time,.notif-empty{font-size:12px;color:var(--muted)}
+
+/* Perfil */
+#profile-scrim{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:48}
+#profile{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(440px,calc(100vw - 24px));max-height:92vh;overflow:auto;background:var(--panel);border:1px solid var(--accent);border-radius:14px;padding:22px;z-index:49;display:flex;flex-direction:column;gap:12px;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+#profile input[type=text]{width:100%}
+.profile-photo{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.avatar{background-size:cover;background-position:center}
+.avatar.big{width:84px;height:84px;font-size:28px;border-radius:50%;display:grid;place-items:center;font-style:normal;font-weight:700;border:2px solid var(--accent);background-color:var(--raised);flex-shrink:0}
+.avatar.mine{cursor:pointer;outline:2px dashed transparent;outline-offset:2px}.avatar.mine:hover,.avatar.mine:focus-visible{outline-color:var(--accent)}
+.member .edit-hint{font-size:12px;color:var(--accent);cursor:pointer;background:none;border:0;padding:0;min-height:0;text-align:left;text-decoration:underline}
+
+/* Salas guardadas */
+.rooms{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.rooms li{display:flex;align-items:center;gap:12px;flex-wrap:wrap;border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--bg)}
+.rooms .room-info{flex:1;min-width:160px;display:flex;flex-direction:column;gap:2px}.rooms .room-info small{color:var(--muted)}
+.rooms .presence{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}.rooms .presence.on{border-color:var(--accent);color:var(--accent)}
+
+#settings-scrim{z-index:64}#settings-drawer{z-index:65}
+.skin-card span{display:block}
+
+#profile-scrim{z-index:66}#profile{z-index:67}#notif-pop{z-index:63}#consent-scrim{z-index:68}#consent{z-index:69}
+
+.mini-switch:disabled{opacity:1}.mini-switch:disabled .track{opacity:.5}.mini-switch:disabled .sw-label{color:var(--text)}
+
+body.cinema .rc-resize{display:none}

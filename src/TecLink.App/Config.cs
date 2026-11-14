@@ -8,6 +8,14 @@ public enum PeerRole { Server, Client }
 
 public enum EdgeDirection { Left, Right }
 
+public sealed class SavedRoom
+{
+    public string Code { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string Address { get; set; } = "";
+    public long SavedAt { get; set; }
+}
+
 public sealed class AppConfig
 {
     public string MachineName { get; set; } = Environment.MachineName;
@@ -34,6 +42,12 @@ public sealed class AppConfig
     public int CursorSizePercent { get; set; } = 100;
     /// <summary>Files shared with the session are copied to this PC's TecLink folder as soon as they are shared.</summary>
     public bool AutoReceive { get; set; } = true;
+    /// <summary>How this person wants to be called in rooms (empty = the computer name). Lives only on this PC.</summary>
+    public string DisplayName { get; set; } = "";
+    /// <summary>Small round picture (data:image/jpeg;base64,...) shown to the people in the room. Lives only on this PC.</summary>
+    public string Avatar { get; set; } = "";
+    /// <summary>Rooms this person saved to come back to; each one is asked to the host as a request.</summary>
+    public List<SavedRoom> SavedRooms { get; set; } = new();
 
     private static string ConfigPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TecLink", "config.json");

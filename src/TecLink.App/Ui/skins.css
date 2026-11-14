@@ -1,0 +1,114 @@
+/* Diseños (skins) de TecLink. Cada uno es una paleta + un material (textura) hechos solo con CSS.
+   --h es el tono base del diseño; el control "Tono" suma grados (--tone) y "Brillo" suma luminosidad (--lx).
+   Los mismos valores se aplican a las miniaturas del carrusel (.skin-preview), que por eso siguen el control en vivo. */
+
+:root[data-skin],.skin-preview{--H:calc(var(--h,0) + var(--tone,0));--glow:none;--elev:none;--radius:3px;--bw:1px;--font:'Segoe UI',sans-serif}
+
+/* ---------- Original: sin cambios, solo vista previa ---------- */
+.skin-preview[data-skin=original]{--bg:#080808;--panel:#121212;--raised:#202420;--text:#ededed;--line:#555f57;--accent:#00ff66;--brand:#ff5555}
+
+/* ---------- Retro: computadora beige de los 80 ---------- */
+:root[data-skin=retro],.skin-preview[data-skin=retro]{
+  --h:38;color-scheme:light;--radius:0;--bw:2px;--font:'Courier New',ui-monospace,monospace;
+  --bg:hsl(var(--H) 34% calc(78% + var(--lx,0%)));--panel:hsl(var(--H) 32% calc(87% + var(--lx,0%)));--raised:hsl(var(--H) 30% calc(70% + var(--lx,0%)));--button:hsl(var(--H) 30% calc(80% + var(--lx,0%)));
+  --line:hsl(var(--H) 40% 20%);--grid:hsl(var(--H) 25% calc(66% + var(--lx,0%)));--text:hsl(var(--H) 45% 11%);--muted:hsl(var(--H) 30% 28%);
+  --accent:hsl(calc(var(--H) + 150) 75% 27%);--local:hsl(calc(var(--H) + 150) 35% calc(80% + var(--lx,0%)));--remote:hsl(calc(var(--H) - 25) 45% calc(80% + var(--lx,0%)));--red:#a51d2b;--brand:hsl(calc(var(--H) - 25) 80% 38%);
+  --bar:hsl(var(--H) 35% 15%);--elev:4px 4px 0 hsl(var(--H) 40% 20% / .55);
+  --tex-body:repeating-linear-gradient(0deg,rgba(0,0,0,.05) 0 2px,transparent 2px 4px);
+  --tex-panel:repeating-linear-gradient(0deg,rgba(0,0,0,.035) 0 2px,transparent 2px 4px);
+}
+
+/* ---------- Futurista: azul profundo, líneas finas de luz ---------- */
+:root[data-skin=futurista],.skin-preview[data-skin=futurista]{
+  --h:205;--radius:14px;--font:'Segoe UI',sans-serif;
+  --bg:hsl(var(--H) 60% calc(6% + var(--lx,0%)));--panel:hsl(var(--H) 52% calc(10% + var(--lx,0%)));--raised:hsl(var(--H) 50% calc(15% + var(--lx,0%)));--button:hsl(var(--H) 50% calc(19% + var(--lx,0%)));
+  --line:hsl(var(--H) 70% 38%);--grid:hsl(var(--H) 50% calc(18% + var(--lx,0%)));--text:hsl(var(--H) 40% 93%);--muted:hsl(var(--H) 30% 72%);
+  --accent:hsl(var(--H) 100% 62%);--local:hsl(var(--H) 65% calc(17% + var(--lx,0%)));--remote:hsl(calc(var(--H) + 60) 50% calc(17% + var(--lx,0%)));--brand:hsl(calc(var(--H) + 30) 100% 65%);
+  --bar:hsl(var(--H) 60% calc(8% + var(--lx,0%)));--elev:0 0 0 1px hsl(var(--H) 100% 60% / .15),0 8px 28px hsl(var(--H) 100% 40% / .12);
+  --tex-body:radial-gradient(900px 420px at 80% -8%,hsl(var(--H) 100% 55% / .16),transparent 65%),linear-gradient(hsl(var(--H) 90% 60% / .05) 1px,transparent 1px) 0 0/44px 44px,linear-gradient(90deg,hsl(var(--H) 90% 60% / .05) 1px,transparent 1px) 0 0/44px 44px;
+  --tex-panel:linear-gradient(180deg,hsl(var(--H) 100% 70% / .07),transparent 40%);
+  --tex-head:linear-gradient(90deg,hsl(var(--H) 100% 60% / .14),transparent 70%);
+}
+
+/* ---------- Neón: negro con luz magenta y cian ---------- */
+:root[data-skin=neon],.skin-preview[data-skin=neon]{
+  --h:300;--radius:10px;
+  --bg:hsl(var(--H) 45% calc(4% + var(--lx,0%)));--panel:hsl(var(--H) 40% calc(8% + var(--lx,0%)));--raised:hsl(var(--H) 40% calc(13% + var(--lx,0%)));--button:hsl(var(--H) 40% calc(17% + var(--lx,0%)));
+  --line:hsl(var(--H) 100% 58%);--grid:hsl(var(--H) 40% calc(15% + var(--lx,0%)));--text:hsl(var(--H) 100% 95%);--muted:hsl(var(--H) 45% 74%);
+  --accent:hsl(calc(var(--H) - 120) 100% 60%);--local:hsl(calc(var(--H) - 120) 70% calc(13% + var(--lx,0%)));--remote:hsl(var(--H) 70% calc(15% + var(--lx,0%)));--brand:hsl(var(--H) 100% 62%);
+  --bar:hsl(var(--H) 45% calc(5% + var(--lx,0%)));--elev:0 0 14px hsl(var(--H) 100% 55% / .38),inset 0 0 14px hsl(var(--H) 100% 55% / .10);
+  --tex-body:radial-gradient(900px 520px at 12% -12%,hsl(var(--H) 100% 50% / .20),transparent 62%),radial-gradient(800px 520px at 100% 112%,hsl(calc(var(--H) - 120) 100% 50% / .16),transparent 62%);
+  --tex-panel:none;
+}
+
+/* ---------- Oxidado: hierro viejo con manchas de óxido ---------- */
+:root[data-skin=oxidado],.skin-preview[data-skin=oxidado]{
+  --h:20;--radius:2px;--bw:2px;
+  --bg:hsl(var(--H) 32% calc(7% + var(--lx,0%)));--panel:hsl(var(--H) 28% calc(12% + var(--lx,0%)));--raised:hsl(var(--H) 30% calc(17% + var(--lx,0%)));--button:hsl(var(--H) 30% calc(21% + var(--lx,0%)));
+  --line:hsl(var(--H) 52% 33%);--grid:hsl(var(--H) 25% calc(17% + var(--lx,0%)));--text:hsl(calc(var(--H) + 10) 30% 90%);--muted:hsl(var(--H) 22% 70%);
+  --accent:hsl(calc(var(--H) + 6) 88% 56%);--local:hsl(var(--H) 40% calc(16% + var(--lx,0%)));--remote:hsl(calc(var(--H) - 14) 55% calc(17% + var(--lx,0%)));--brand:hsl(calc(var(--H) + 6) 88% 52%);
+  --bar:hsl(var(--H) 32% calc(9% + var(--lx,0%)));--elev:inset 0 0 22px rgba(0,0,0,.55);
+  --rust:url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.03 .045' numOctaves='4' seed='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .78 0 0 0 0 .33 0 0 0 0 .08 0 0 0 .6 -.2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23f)'/%3E%3C/svg%3E");
+  --tex-body:var(--rust);--tex-panel:var(--rust),radial-gradient(120% 90% at 0 0,hsl(var(--H) 70% 40% / .14),transparent 60%);--tex-head:var(--rust);
+}
+
+/* ---------- Metal: acero cepillado ---------- */
+:root[data-skin=metal],.skin-preview[data-skin=metal]{
+  --h:215;--radius:6px;
+  --bg:hsl(var(--H) 9% calc(11% + var(--lx,0%)));--panel:hsl(var(--H) 8% calc(17% + var(--lx,0%)));--raised:hsl(var(--H) 8% calc(23% + var(--lx,0%)));--button:hsl(var(--H) 8% calc(27% + var(--lx,0%)));
+  --line:hsl(var(--H) 7% 46%);--grid:hsl(var(--H) 6% calc(22% + var(--lx,0%)));--text:hsl(var(--H) 12% 94%);--muted:hsl(var(--H) 8% 75%);
+  --accent:hsl(var(--H) 95% 66%);--local:hsl(var(--H) 30% calc(20% + var(--lx,0%)));--remote:hsl(calc(var(--H) - 195) 22% calc(21% + var(--lx,0%)));--brand:hsl(var(--H) 95% 66%);
+  --bar:hsl(var(--H) 9% calc(9% + var(--lx,0%)));--elev:inset 0 1px rgba(255,255,255,.22),inset 0 -2px rgba(0,0,0,.45),0 3px 10px rgba(0,0,0,.4);
+  --brush:url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.004 .85' numOctaves='2' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .55 -.18'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23f)'/%3E%3C/svg%3E");
+  --tex-body:var(--brush);--tex-panel:var(--brush),linear-gradient(180deg,rgba(255,255,255,.07),transparent 35%,rgba(0,0,0,.18));--tex-head:var(--brush),linear-gradient(180deg,rgba(255,255,255,.10),rgba(0,0,0,.10));
+}
+
+/* ---------- Madera: tablones oscuros con veta ---------- */
+:root[data-skin=madera],.skin-preview[data-skin=madera]{
+  --h:27;--radius:8px;--bw:2px;
+  --bg:hsl(var(--H) 42% calc(9% + var(--lx,0%)));--panel:hsl(var(--H) 38% calc(15% + var(--lx,0%)));--raised:hsl(var(--H) 40% calc(21% + var(--lx,0%)));--button:hsl(var(--H) 38% calc(26% + var(--lx,0%)));
+  --line:hsl(var(--H) 46% 34%);--grid:hsl(var(--H) 30% calc(19% + var(--lx,0%)));--text:hsl(calc(var(--H) + 12) 55% 92%);--muted:hsl(var(--H) 32% 72%);
+  --accent:hsl(calc(var(--H) + 10) 88% 62%);--local:hsl(var(--H) 42% calc(18% + var(--lx,0%)));--remote:hsl(calc(var(--H) - 18) 50% calc(19% + var(--lx,0%)));--brand:hsl(calc(var(--H) + 10) 88% 58%);
+  --bar:hsl(var(--H) 44% calc(7% + var(--lx,0%)));--elev:inset 0 1px rgba(255,220,170,.14),0 4px 12px rgba(0,0,0,.45);
+  --grain:url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='260'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.008 .42' numOctaves='3' seed='11' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .1 0 0 0 0 .05 0 0 0 0 .02 0 0 0 .9 -.3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23f)'/%3E%3C/svg%3E");
+  --planks:repeating-linear-gradient(0deg,transparent 0 78px,rgba(0,0,0,.28) 78px 80px);
+  --tex-body:var(--grain),var(--planks);--tex-panel:var(--grain),linear-gradient(180deg,rgba(255,210,150,.06),transparent 40%);--tex-head:var(--grain);
+}
+
+/* ---------- Piedra: granito gris con vetas de musgo ---------- */
+:root[data-skin=piedra],.skin-preview[data-skin=piedra]{
+  --h:210;--radius:5px;--bw:2px;
+  --bg:hsl(var(--H) 6% calc(13% + var(--lx,0%)));--panel:hsl(var(--H) 6% calc(19% + var(--lx,0%)));--raised:hsl(var(--H) 6% calc(25% + var(--lx,0%)));--button:hsl(var(--H) 6% calc(29% + var(--lx,0%)));
+  --line:hsl(var(--H) 5% 44%);--grid:hsl(var(--H) 5% calc(24% + var(--lx,0%)));--text:hsl(var(--H) 10% 93%);--muted:hsl(var(--H) 7% 72%);
+  --accent:hsl(calc(var(--H) - 60) 50% 62%);--local:hsl(calc(var(--H) - 60) 22% calc(20% + var(--lx,0%)));--remote:hsl(calc(var(--H) + 100) 14% calc(22% + var(--lx,0%)));--brand:hsl(calc(var(--H) - 60) 50% 58%);
+  --bar:hsl(var(--H) 6% calc(10% + var(--lx,0%)));--elev:inset 0 2px 3px rgba(255,255,255,.10),inset 0 -3px 6px rgba(0,0,0,.45),0 4px 12px rgba(0,0,0,.4);
+  --speck:url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' seed='5' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .85 0 0 0 0 .85 0 0 0 0 .85 0 0 0 .7 -.22'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23f)'/%3E%3C/svg%3E");
+  --veins:url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='360' height='360'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.012' numOctaves='4' seed='9' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .06 0 0 0 0 .06 0 0 0 0 .07 0 0 0 .9 -.3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23f)'/%3E%3C/svg%3E");
+  --tex-body:var(--speck),var(--veins);--tex-panel:var(--speck),var(--veins);--tex-head:var(--speck);
+}
+
+/* ---------- Aplicación a toda la plataforma ---------- */
+:root[data-skin]{--ui-font:var(--font)}
+:root[data-skin] body{background-image:var(--tex-body,none);background-attachment:fixed;font-family:var(--font)}
+:root[data-skin] .topbar{background:var(--bar,var(--panel))}
+:root[data-skin] .brand strong{color:#fff}
+:root[data-skin] .panel{background-image:var(--tex-panel,none);border-radius:var(--radius);border-width:var(--bw);box-shadow:var(--elev)}
+:root[data-skin] .section-head{background-image:var(--tex-head,none)}
+:root[data-skin] #settings-drawer,:root[data-skin] #notif-pop,:root[data-skin] #profile{background-image:var(--tex-panel,none)}
+:root[data-skin] .gear:hover,:root[data-skin] .gear:focus-visible{box-shadow:var(--glow)}
+
+/* ---------- Carrusel en la configuración ---------- */
+.skin-carousel{display:flex;align-items:stretch;gap:8px}
+.skin-carousel>button{min-width:40px;padding:0;font-size:22px;flex-shrink:0}
+.skin-track{display:flex;gap:10px;overflow-x:auto;scroll-snap-type:x mandatory;scroll-behavior:smooth;padding:4px 2px 8px;flex:1;scrollbar-width:thin}
+.skin-card{flex:0 0 138px;scroll-snap-align:start;display:flex;flex-direction:column;gap:8px;padding:8px;background:transparent;text-align:center;border-radius:12px;min-height:0}
+.skin-card span{font-size:13px;font-weight:600;color:var(--text)}
+.skin-card[aria-checked=true]{border-color:var(--accent);outline:2px solid var(--accent);outline-offset:2px}
+.skin-preview{height:84px;border-radius:8px;background-color:var(--bg);background-image:var(--tex-body,none);border:var(--bw) solid var(--line);display:flex;flex-direction:column;gap:6px;padding:8px;overflow:hidden;font-family:var(--font);pointer-events:none}
+.skin-preview i{display:block}
+.sp-bar{height:9px;background:var(--raised);border-bottom:2px solid var(--brand,var(--accent));border-radius:calc(var(--radius) / 2)}
+.sp-panel{flex:1;background-color:var(--panel);background-image:var(--tex-panel,none);border:1px solid var(--line);border-radius:calc(var(--radius) / 2);padding:6px;display:flex;flex-direction:column;gap:5px;box-shadow:var(--elev)}
+.sp-panel b{display:block;height:5px;width:72%;background:var(--text);opacity:.85;border-radius:3px}
+.sp-panel b:last-child{width:44%;background:var(--accent);opacity:1}
+#skin-tone:disabled,#skin-light:disabled{opacity:.4}
+:root[data-skin=retro] .topbar{--text:#f2e8cf;--muted:#cdbf9c;--accent:hsl(calc(var(--H) + 150) 55% 62%);--line:hsl(var(--H) 20% 55%);color:#f2e8cf}

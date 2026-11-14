@@ -195,6 +195,32 @@ public sealed class ControlPanelForm : Form
                     System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(_bridge.Files.ReceiveFolder) { UseShellExecute = true });
                     break;
                 case "setPower": _setPower(root.GetProperty("on").GetBoolean()); RefreshState(); break;
+                case "roomFullscreen": SetRoomFullscreen(root.GetProperty("on").GetBoolean()); break;
+                case "setProfile":
+                    _bridge.SetProfile(root.TryGetProperty("name", out var pName) ? pName.GetString() : null, root.TryGetProperty("pc", out var pPc) ? pPc.GetString() : null,
+                        root.TryGetProperty("avatar", out var pAv) && pAv.ValueKind == System.Text.Json.JsonValueKind.String ? pAv.GetString() : null);
+                    RefreshState();
+                    break;
+                case "joinAnswer": _bridge.AnswerJoin(root.GetProperty("id").GetString() ?? "", root.GetProperty("accept").GetBoolean()); RefreshState(); break;
+                case "saveRoom": _bridge.SaveRoom(); RefreshState(); break;
+                case "forgetRoom": _bridge.ForgetRoom(root.GetProperty("code").GetString()); RefreshState(); break;
+                case "checkRooms":
+                    _ = Task.Run(async () =>
+                    {
+                        var found = await _bridge.CheckRoomsAsync(CancellationToken.None);
+                        if (!IsDisposed && IsHandleCreated) BeginInvoke(() => { Post(new { type = "roomsPresence", found }); RefreshState(); });
+                    });
+                    break;
+                case "enterRoom":
+                    try
+                    {
+                        var roomCode = root.GetProperty("code").GetString();
+                        _bridge.AskNextJoin();
+                        _session("join", roomCode, _bridge.SavedRoomAddress(roomCode));
+                    }
+                    catch (ArgumentException ex) { Post(new { type = "toast", message = ex.Message }); }
+                    RefreshState();
+                    break;
                 case "session":
                     _session(root.GetProperty("action").GetString() ?? "", root.TryGetProperty("code", out var code) ? code.GetString() : null,
                         root.TryGetProperty("address", out var address) ? address.GetString() : null);
@@ -238,6 +264,24 @@ public sealed class ControlPanelForm : Form
     }
 
     private void Post(object message) { if (_ready && !_web.IsDisposed) _web.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(message, Json)); }
+    private FormBorderStyle _borderBefore; private FormWindowState _stateBefore; private bool _roomFull;
+
+    /// <summary>The whole panel window covers its monitor while the room is shown full screen; everything is restored afterwards.</summary>
+    private void SetRoomFullscreen(bool on)
+    {
+        if (on == _roomFull) return;
+        _roomFull = on;
+        if (on)
+        {
+            _borderBefore = FormBorderStyle; _stateBefore = WindowState;
+            WindowState = FormWindowState.Normal; FormBorderStyle = FormBorderStyle.None; WindowState = FormWindowState.Maximized;
+        }
+        else
+        {
+            FormBorderStyle = _borderBefore; WindowState = _stateBefore == FormWindowState.Minimized ? FormWindowState.Normal : _stateBefore;
+        }
+    }
+
     public void RefreshState() => Post(new { type = "state", state = _bridge.ViewState(_status()) });
     public void Shutdown() { _bridge.TileReceived -= _tileHandler; _bridge.RemovalAsked -= _removalHandler; _bridge.Notice -= _noticeHandler; _bridge.ViewerCloseRequested -= _controlOffHandler; _bridge.WatchScreens(false, 0);_bridge.CameraFrameReceived -= _cameraHandler; _bridge.PeerFilesReceived -= _peerFilesHandler; _bridge.ChatReceived -= _chatHandler; _bridge.VoiceReceived -= _voiceHandler; _shutdown = true; Close(); Dispose(); }
 }
