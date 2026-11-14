@@ -156,6 +156,61 @@ public sealed class FileTransfers
         }
     }
 
+    public sealed record FileEntry(string Name, long Size, long Modified, bool IsDirectory);
+
+    /// <summary>What this PC holds in its TecLink folder (top level only), newest first.</summary>
+    public List<FileEntry> List()
+    {
+        var result = new List<FileEntry>();
+        if (!Directory.Exists(ReceiveFolder)) return result;
+        var options = new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint | FileAttributes.Hidden };
+        foreach (var info in new DirectoryInfo(ReceiveFolder).EnumerateFileSystemInfos("*", options).Take(500))
+            result.Add(new FileEntry(info.Name, info is FileInfo file ? file.Length : 0, new DateTimeOffset(info.LastWriteTimeUtc).ToUnixTimeSeconds(), info is DirectoryInfo));
+        return result.OrderByDescending(e => e.Modified).ToList();
+    }
+
+    /// <summary>A name from the panel or the peer → full path inside the TecLink folder, or null.</summary>
+    public string? PathInside(string name)
+    {
+        if (string.IsNullOrEmpty(name) || Path.GetFileName(name) != name || name is "." or "..") return null;
+        var path = Path.Combine(ReceiveFolder, name);
+        return File.Exists(path) || Directory.Exists(path) ? path : null;
+    }
+
+    /// <summary>Copies a file or folder to this PC's desktop (never overwrites).</summary>
+    public string CopyToDesktop(string path)
+    {
+        var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+        var target = Path.Combine(desktop, UniqueName(desktop, Path.GetFileName(path)));
+        if (File.Exists(path)) File.Copy(path, target);
+        else CopyDirectory(path, target);
+        return target;
+    }
+
+    private static void CopyDirectory(string source, string target)
+    {
+        Directory.CreateDirectory(target);
+        var options = new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint };
+        foreach (var dir in Directory.EnumerateDirectories(source, "*", options)) Directory.CreateDirectory(Path.Combine(target, Path.GetRelativePath(source, dir)));
+        foreach (var file in Directory.EnumerateFiles(source, "*", options)) File.Copy(file, Path.Combine(target, Path.GetRelativePath(source, file)));
+    }
+
+    /// <summary>The peer asked for something from our folder: "fetch:name" or "desktop:name".</summary>
+    public void RunCommand(string command)
+    {
+        var split = (command ?? "").IndexOf(':');
+        if (split < 0) return;
+        var verb = command![..split]; var name = command[(split + 1)..];
+        var path = PathInside(name);
+        if (path is null) { Report("Ya no está en la otra PC: " + name); return; }
+        try
+        {
+            if (verb == "fetch") _ = SendAsync(new[] { path });
+            else if (verb == "desktop") { CopyToDesktop(path); Report("Puesto en tu escritorio por la otra PC: " + name); }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Report("No se pudo: " + ex.Message); }
+    }
+
     /// <summary>Returns true when the message belonged to file transfer.</summary>
     public bool Handle(WireMessage message)
     {

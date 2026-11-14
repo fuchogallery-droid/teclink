@@ -2,13 +2,17 @@ using System.Drawing;
 
 namespace TecLink.Core;
 
-public sealed record ScreenPlacement(string Id, bool Remote, int X, int Y);
+/// <summary>Hidden = the screen was removed from the map: it has no routes and is not counted.</summary>
+public sealed record ScreenPlacement(string Id, bool Remote, int X, int Y, bool Hidden = false);
 
 public static class SpatialMap
 {
-    public static List<ScreenRoute> Build(DisplayInfo[] local, DisplayInfo[] remote, IReadOnlyList<ScreenPlacement> positions)
+    public static List<ScreenRoute> Build(DisplayInfo[] local, DisplayInfo[] remote, IReadOnlyList<ScreenPlacement> allPositions)
     {
-        var screens = local.Select(d => (Display: d, Remote: false)).Concat(remote.Select(d => (Display: d, Remote: true))).ToArray();
+        var hidden = allPositions.Where(p => p.Hidden).Select(p => (p.Id, p.Remote)).ToHashSet();
+        var positions = allPositions.Where(p => !p.Hidden).ToList();
+        var screens = local.Select(d => (Display: d, Remote: false)).Concat(remote.Select(d => (Display: d, Remote: true)))
+            .Where(s => !hidden.Contains((s.Display.Id, s.Remote))).ToArray();
         if (positions.Count != screens.Length || positions.Select(p => (p.Id, p.Remote)).Distinct().Count() != positions.Count)
             throw new ArgumentException("Coloca una vez cada pantalla en el mapa.");
         var placed = screens.Select(s =>

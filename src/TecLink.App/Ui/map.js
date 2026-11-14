@@ -2,7 +2,7 @@
   const key = s => (s.remote ? 'r:' : 'l:') + s.id;
   const all = state => [...state.local.map(s => ({ ...s, remote: false })), ...state.remote.map(s => ({ ...s, remote: true }))];
   function rectangles(state, positions) {
-    return all(state).map(s => { const p = positions.find(p => key(p) === key(s)); return p ? { ...s, x: p.x, y: p.y } : null; }).filter(Boolean);
+    return all(state).map(s => { const p = positions.find(p => key(p) === key(s)); return p && !p.hidden ? { ...s, x: p.x, y: p.y } : null; }).filter(Boolean);
   }
   function bounds(rects) {
     if (!rects.length) return { x: 0, y: 0, width: 1000, height: 1000 };

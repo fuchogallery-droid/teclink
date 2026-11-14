@@ -56,6 +56,50 @@ public sealed class EdgeBridge : IDisposable
     public event Action<WireMessage>? ScreenFrameReceived;
     public event Action? ViewerCloseRequested;
 
+    /// <summary>Raised on the network thread with each camera frame (video-call bubble) of the peer.</summary>
+    public event Action<byte[]>? CameraFrameReceived;
+    private Task _cameraSend = Task.CompletedTask;
+
+    /// <summary>Live chat and voice. Both arrive on the network thread.</summary>
+    public event Action<string, string>? ChatReceived;   // (sender name, text)
+    public event Action<byte[]>? VoiceReceived;
+    private int _voicePending;
+
+    public bool SendChat(string text)
+    {
+        text = (text ?? "").Trim();
+        if (text.Length == 0 || _connection is not { } conn || !_remoteKnown) return false;
+        _ = conn.SendAsync(WireMessage.ChatText(text.Length > 2000 ? text[..2000] : text));
+        return true;
+    }
+
+    /// <summary>Voice is sent as it is captured; if the link stalls, old audio is dropped so the call never lags behind.</summary>
+    public void SendVoice(byte[] pcm)
+    {
+        if (_connection is not { } conn || !_remoteKnown || pcm.Length == 0 || pcm.Length > 64 * 1024) return;
+        if (Volatile.Read(ref _voicePending) > 6) return;
+        Interlocked.Increment(ref _voicePending);
+        _ = conn.SendAsync(WireMessage.VoiceChunk(pcm)).ContinueWith(_ => Interlocked.Decrement(ref _voicePending));
+    }
+
+    /// <summary>Raised with the JSON list of files the peer holds in its TecLink folder.</summary>
+    public event Action<string>? PeerFilesReceived;
+    public static readonly System.Text.Json.JsonSerializerOptions PeerFilesJson = new(System.Text.Json.JsonSerializerDefaults.Web);
+    public void RequestPeerFiles() { if (CanUseExtras) _ = _connection!.SendAsync(WireMessage.FileListRequest()); }
+    public void PeerFileCommand(string verb, string name)
+    {
+        if (!CanUseExtras || verb is not ("fetch" or "desktop") || string.IsNullOrEmpty(name)) return;
+        _ = _connection!.SendAsync(WireMessage.FileCommand(verb + ":" + name));
+    }
+
+    /// <summary>Sends one camera frame; frames are dropped while the previous one is still going out.</summary>
+    public void SendCameraFrame(byte[] frame)
+    {
+        if (_connection is not { } conn || !_remoteKnown || frame.Length == 0 || frame.Length > 512 * 1024) return;
+        if (!_cameraSend.IsCompleted) return;
+        _cameraSend = conn.SendAsync(WireMessage.CameraFrame(frame));
+    }
+
     // Tracks keys/buttons we've injected on THIS machine because the peer is controlling
     // us, so a dropped connection (or the peer handing control back) mid-keypress doesn't
     // leave them stuck down.
@@ -283,6 +327,20 @@ public sealed class EdgeBridge : IDisposable
         // Bulk data stays on the network thread: writing to disk here is what
         // throttles the sender, and frames are decoded off the UI thread.
         if (Files.Handle(msg)) return;
+        if (msg.Type == MessageType.CameraFrame) { CameraFrameReceived?.Invoke(msg.Data); return; }
+        if (msg.Type == MessageType.Voice) { VoiceReceived?.Invoke(msg.Data); return; }
+        if (msg.Type == MessageType.Chat)
+        {
+            if (!string.IsNullOrWhiteSpace(msg.Text)) ChatReceived?.Invoke(_remoteName, msg.Text!.Length > 2000 ? msg.Text[..2000] : msg.Text);
+            return;
+        }
+        if (msg.Type == MessageType.FileListRequest)
+        {
+            _ = _connection?.SendAsync(WireMessage.FileList(System.Text.Json.JsonSerializer.Serialize(Files.List(), PeerFilesJson)));
+            return;
+        }
+        if (msg.Type == MessageType.FileList) { PeerFilesReceived?.Invoke(msg.Text ?? "[]"); return; }
+        if (msg.Type == MessageType.FileCommand) { Files.RunCommand(msg.Text ?? ""); return; }
         if (msg.Type == MessageType.ScreenFrame) { ScreenFrameReceived?.Invoke(msg); return; }
         if (msg.Type == MessageType.ScreenAck) { _screenHost.Ack(); return; }
         if (_clipboard.InvokeRequired)

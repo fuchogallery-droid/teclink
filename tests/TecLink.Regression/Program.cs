@@ -283,4 +283,40 @@ finally { try { Directory.Delete(work, true); } catch (IOException) { } }
     cts.Cancel();
     try { await responder; } catch (OperationCanceledException) { }
 }
+
+// Chat, voice, camera, file panel and removing a screen from the map.
+{
+    Check(WireMessage.Decode(WireMessage.ChatText("Hola equipo").Encode()).Text == "Hola equipo", "Chat text travels");
+    var pcm = new byte[] { 1, 2, 3, 4, 250, 251 };
+    Check(WireMessage.Decode(WireMessage.VoiceChunk(pcm).Encode()).Data.SequenceEqual(pcm), "Voice PCM travels intact");
+    Check(WireMessage.Decode(WireMessage.CameraFrame(pcm).Encode()).Data.SequenceEqual(pcm), "Camera frame travels intact");
+    Check(WireMessage.Decode(WireMessage.FileList("[{\"name\":\"a\"}]").Encode()).Text == "[{\"name\":\"a\"}]", "File list travels");
+    Check(WireMessage.Decode(WireMessage.FileCommand("desktop:Informe.pdf").Encode()).Text == "desktop:Informe.pdf", "File command travels");
+    Check(WireMessage.Decode(WireMessage.FileListRequest().Encode()).Type == MessageType.FileListRequest, "File list request travels");
+
+    var a = new DisplayInfo("A", 0, 0, 1000, 800); var b = new DisplayInfo("B", 0, 0, 1000, 800); var c = new DisplayInfo("C", 0, 0, 1000, 800);
+    var all = new[] { new ScreenPlacement("A", false, 0, 0), new ScreenPlacement("B", false, 1000, 0), new ScreenPlacement("C", true, 2000, 0) };
+    var routes = SpatialMap.Build(new[] { a, b }, new[] { c }, all);
+    Check(routes.Any(r => r.SourceId == "B" && r.TargetId == "C" && r.TargetRemote), "Screens next to each other get a route");
+    var withoutB = new[] { all[0], all[1] with { Hidden = true }, all[2] with { X = 1000 } };
+    var routes2 = SpatialMap.Build(new[] { a, b }, new[] { c }, withoutB);
+    Check(routes2.All(r => r.SourceId != "B" && r.TargetId != "B"), "A removed screen has no routes");
+    Check(routes2.Any(r => r.SourceId == "A" && r.TargetId == "C"), "The remaining screens still connect");
+    var map = WireMessage.Decode(WireMessage.Map("x", withoutB).Encode());
+    Check(map.Placements.Single(p => p.Id == "B").Hidden && !map.Placements.Single(p => p.Id == "A").Hidden, "The removed flag survives the wire");
+}
+
+// TecLink folder listing and the desktop copy.
+{
+    var folder = Path.Combine(Path.GetTempPath(), "teclink-lista-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(Path.Combine(folder, "Carpeta")); File.WriteAllText(Path.Combine(folder, "nota.txt"), "hola");
+    try
+    {
+        var transfers = new FileTransfers(() => null, folder);
+        var list = transfers.List();
+        Check(list.Count == 2 && list.Any(e => e.Name == "nota.txt" && e.Size == 4) && list.Any(e => e.Name == "Carpeta" && e.IsDirectory), "The TecLink folder is listed");
+        Check(transfers.PathInside("nota.txt") is not null && transfers.PathInside("..\\x") is null && transfers.PathInside("a/b") is null && transfers.PathInside("") is null, "Only names inside the folder are accepted");
+    }
+    finally { try { Directory.Delete(folder, true); } catch (IOException) { } }
+}
 Console.WriteLine($"PASS: {checks} geometry, input, map, TCP, pointer and file-transfer regression checks");

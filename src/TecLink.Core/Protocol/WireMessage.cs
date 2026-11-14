@@ -92,6 +92,13 @@ public sealed class WireMessage
 
     public static WireMessage ClipboardTextMsg(string text) => new() { Type = MessageType.ClipboardText, Text = text };
 
+    /// <summary>First byte = 1 when the person is already cut out (transparent background); the rest is a WebP image.</summary>
+    public static WireMessage CameraFrame(byte[] data) => new() { Type = MessageType.CameraFrame, Data = data };
+    public static WireMessage ChatText(string text) => new() { Type = MessageType.Chat, Text = text };
+    public static WireMessage VoiceChunk(byte[] pcm) => new() { Type = MessageType.Voice, Data = pcm };
+    public static WireMessage FileListRequest() => new() { Type = MessageType.FileListRequest };
+    public static WireMessage FileList(string json) => new() { Type = MessageType.FileList, Text = json };
+    public static WireMessage FileCommand(string command) => new() { Type = MessageType.FileCommand, Text = command };
     public static WireMessage Join(string code) => new() { Type = MessageType.Join, Text = code };
     public static WireMessage JoinResult(bool accepted, string? reason = null) => new() { Type = MessageType.JoinResult, Accepted = accepted, Text = reason };
     public static WireMessage Management(bool on) => new() { Type = MessageType.Management, Accepted = on };
@@ -189,6 +196,19 @@ public sealed class WireMessage
             case MessageType.SpatialMap:
                 w.Write(RequestId ?? ""); w.Write(Placements.Length);
                 foreach (var p in Placements) { w.Write(p.Id); w.Write(p.Remote); w.Write(p.X); w.Write(p.Y); }
+                // Optional tail (older decoders ignore it): the screens removed from the map.
+                var hiddenPlacements = Placements.Where(p => p.Hidden).ToArray();
+                w.Write(hiddenPlacements.Length);
+                foreach (var p in hiddenPlacements) { w.Write(p.Id); w.Write(p.Remote); }
+                break;
+            case MessageType.CameraFrame:
+            case MessageType.Voice:
+                w.Write(Data.Length); w.Write(Data);
+                break;
+            case MessageType.Chat:
+            case MessageType.FileList:
+            case MessageType.FileCommand:
+                w.Write(Text ?? "");
                 break;
             case MessageType.SpatialMapAck:
                 w.Write(RequestId ?? ""); w.Write(Accepted); w.Write(Text ?? "");
@@ -240,6 +260,8 @@ public sealed class WireMessage
             MessageType.SpatialMap => ReadMap(r),
             MessageType.SpatialMapAck => new WireMessage { Type = type, RequestId = r.ReadString(), Accepted = r.ReadBoolean(), Text = r.ReadString() },
             MessageType.ScreenStop or MessageType.ScreenAck => new WireMessage { Type = type },
+            MessageType.CameraFrame or MessageType.Voice => new WireMessage { Type = type, Data = ReadBytes(r) },
+            MessageType.Chat or MessageType.FileList or MessageType.FileCommand => new WireMessage { Type = type, Text = r.ReadString() },
             MessageType.Join => new WireMessage { Type = type, Text = r.ReadString() },
             MessageType.JoinResult => new WireMessage { Type = type, Accepted = r.ReadBoolean(), Text = r.ReadString() },
             MessageType.Management => new WireMessage { Type = type, Accepted = r.ReadBoolean() },
@@ -290,6 +312,17 @@ public sealed class WireMessage
         if (count is < 0 or > 128) throw new InvalidDataException("Número de pantallas inválido en el mapa.");
         var positions = new ScreenPlacement[count];
         for (var n = 0; n < count; n++) positions[n] = new ScreenPlacement(reader.ReadString(), reader.ReadBoolean(), reader.ReadInt32(), reader.ReadInt32());
+        if (reader.BaseStream.Length - reader.BaseStream.Position >= 4)
+        {
+            var hiddenCount = reader.ReadInt32();
+            if (hiddenCount is < 0 or > 128) throw new InvalidDataException("Número de pantallas quitadas inválido.");
+            for (var n = 0; n < hiddenCount; n++)
+            {
+                var id = reader.ReadString(); var remote = reader.ReadBoolean();
+                var index = Array.FindIndex(positions, p => p.Id == id && p.Remote == remote);
+                if (index >= 0) positions[index] = positions[index] with { Hidden = true };
+            }
+        }
         return new WireMessage { Type = MessageType.SpatialMap, RequestId = request, Placements = positions };
     }
 }

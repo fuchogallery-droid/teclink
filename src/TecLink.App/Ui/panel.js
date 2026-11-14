@@ -14,6 +14,12 @@
     if (message.type === 'save') setTimeout(() => receive({ type: 'saved', state: { ...state, ...message.map, spatialEnabled: true }, message: 'Mapa guardado en ambas PCs.' }), 180);
   }
   function receive(message) {
+    if (message.type === 'cameraFrame') { TecRoom.peerFrame(message.data); return; }
+    if (message.type === 'myFiles') { renderFiles('my-files', message.items, false); return; }
+    if (message.type === 'peerFiles') { renderFiles('peer-files', message.items, true); return; }
+    if (message.type === 'chat') { TecChat.incoming(message.from, message.text, message.at); return; }
+    if (message.type === 'voice') { TecChat.voice(message.data); return; }
+    if (message.type === 'toast') { toast(message.message); return; }
     if (message.type === 'error') { saving = false; dirty = true; toast(message.message); update(); return; }
     if (!message.state) return;
     state = message.state;
@@ -92,6 +98,10 @@
     $('routes-list').replaceChildren();
     contacts.filter(c => M.key(c.a) === selected || M.key(c.b) === selected).forEach(c => { const first = M.key(c.a) === selected, target = first ? c.b : c.a, side = first ? c.side : opposite[c.side], li = document.createElement('li'); li.textContent = `${names[side]} ↔ ${names[opposite[side]]} · ${target.remote ? state.remoteName || 'Otra PC' : 'Esta PC'} / ${target.label || 'Pantalla'}`; $('routes-list').append(li); });
     if (!$('routes-list').children.length) { const li = document.createElement('li'); li.textContent = 'Sin bordes unidos.'; $('routes-list').append(li); }
+    const removed = draft.placements.filter(p => p.hidden).length;
+    $('restore-screens').hidden = !removed; $('restore-screens').textContent = `Restaurar pantallas quitadas (${removed})`;
+    $('remove-screen').disabled = !s || saving || rects().length <= 1; $('remove-screen').textContent = removeArmed === selected ? '¿Seguro? Pulsa otra vez' : 'Quitar esta pantalla';
+    TecRoom.render(state); TecChat.render(state);
     $('save').disabled = saving || overlaps; $('save').textContent = saving ? 'Guardando…' : dirty ? 'Guardar mapa' : 'Mapa guardado';
     $('save-heading').textContent = dirty ? 'Cambios sin guardar' : 'Mapa actual'; $('save-message').textContent = saving ? 'Esperando confirmación…' : 'Los cambios se aplican al guardar.';
     ['theme', 'automatic', 'reset-map', 'position-x', 'position-y'].forEach(id => $(id).disabled = saving);
@@ -106,12 +116,32 @@
     $('cursor-size').disabled = chosenStyle === 'system';
     $('mouse-sync').textContent = extras ? 'Sincronizado con la otra PC.' : 'La otra PC no está conectada o necesita esta versión de TecLink: por ahora los cambios se guardan solo aquí.';
     $('peer-sync').textContent = extras ? '' : 'Conecta la otra PC con esta misma versión de TecLink para ver su pantalla y enviar archivos.';
-    ['view-screen', 'pick-files', 'pick-folder'].forEach(id => $(id).disabled = !extras);
+    ['pick-files', 'pick-folder'].forEach(id => $(id).disabled = !extras);
+    $('theirs-title').textContent = state.remoteName || 'La otra PC';
+    if (state.transfer !== lastTransfer || extras !== lastExtras) { lastTransfer = state.transfer; lastExtras = extras; refreshFiles(); }
     $('dropzone').setAttribute('aria-disabled', extras ? 'false' : 'true');
     $('transfer-status').textContent = state.transfer || 'Sin envíos todavía.';
     if (state.receiveFolder) $('receive-folder').textContent = state.receiveFolder;
     draw();
   }
+  // ---- Archivos compartidos: lista de cada PC con acciones ----
+  let lastTransfer = null, lastExtras = null;
+  const size = n => n >= 1 << 30 ? (n / (1 << 30)).toFixed(1) + ' GB' : n >= 1 << 20 ? (n / (1 << 20)).toFixed(1) + ' MB' : n >= 1024 ? Math.round(n / 1024) + ' KB' : n + ' B';
+  function refreshFiles() { send({ type: 'listFiles' }); if (state?.extras) send({ type: 'listPeerFiles' }); else renderFiles('peer-files', [], true); }
+  function renderFiles(id, items, remote) {
+    const list = $(id); list.replaceChildren();
+    if (!items.length) { const li = document.createElement('li'); li.className = 'empty'; li.textContent = remote ? (state?.extras ? 'La otra PC no tiene archivos en su carpeta de TecLink.' : 'Conecta la otra PC con esta versión para ver sus archivos.') : 'Todavía no hay archivos aquí. Lo que recibas aparecerá en esta lista.'; list.append(li); return; }
+    for (const f of items) {
+      const li = document.createElement('li'), info = document.createElement('div'), name = document.createElement('strong'), meta = document.createElement('small'), actions = document.createElement('div');
+      info.className = 'fi-name'; actions.className = 'fi-actions'; name.textContent = (f.isDirectory ? '📁 ' : '') + f.name; name.title = f.name;
+      meta.textContent = `${f.isDirectory ? 'Carpeta' : size(f.size)} · ${new Date(f.modified * 1000).toLocaleDateString('es')}`; info.append(name, meta);
+      const add = (label, aria, fn) => { const b = document.createElement('button'); b.className = 'secondary'; b.textContent = label; b.setAttribute('aria-label', `${aria}: ${f.name}`); b.onclick = fn; actions.append(b); };
+      if (remote) { add('Traer', 'Traer a esta PC', () => { send({ type: 'peerFileAction', action: 'fetch', name: f.name }); toast('Pidiendo el archivo…'); }); add('A su escritorio', 'Poner en el escritorio de la otra PC', () => { send({ type: 'peerFileAction', action: 'desktop', name: f.name }); toast('Enviado al escritorio de la otra PC.'); }); }
+      else { add('Enviar', 'Enviar a la otra PC', () => send({ type: 'fileAction', action: 'send', name: f.name })); add('Al escritorio', 'Poner en mi escritorio', () => send({ type: 'fileAction', action: 'desktop', name: f.name })); add('Mostrar', 'Mostrar en la carpeta', () => send({ type: 'fileAction', action: 'show', name: f.name })); }
+      li.append(info, actions); list.append(li);
+    }
+  }
+  $('refresh-mine').onclick = $('refresh-theirs').onclick = refreshFiles;
   // ---- Conectar: sesión con código, interruptor de gestión y cuadrícula ----
   function updateSession() {
     const host = state.role === 'Server', legacy = !host && !state.joinCode, on = state.powered !== false, max = state.maxScreens || 10;
@@ -129,8 +159,9 @@
     sw.setAttribute('aria-checked', m); sw.disabled = !host || !on;
     $('management-label').textContent = host ? `Gestión de pantallas: ${m ? 'activada' : 'apagada'}` : `Gestión: ${m ? 'activada por el anfitrión' : 'la decide el anfitrión'}`;
     $('management-note').textContent = m ? 'Ambas PCs pueden ver y controlar las pantallas de la sesión.' : 'Las pantallas se suman al mapa, pero nadie las ve ni las controla hasta que el anfitrión active este interruptor.';
-    const pcs = [{ name: state.machineName + ' (esta PC)', screens: state.local || [] }];
-    if (state.connected) pcs.push({ name: state.remoteName || 'Otra PC', screens: state.remote || [] });
+    const shown = (list, remote) => (list || []).filter(s => !(state.placements || []).some(p => p.hidden && p.id === s.id && !!p.remote === remote));
+    const pcs = [{ name: state.machineName + ' (esta PC)', screens: shown(state.local, false) }];
+    if (state.connected) pcs.push({ name: state.remoteName || 'Otra PC', screens: shown(state.remote, true) });
     const total = pcs.reduce((n, p) => n + p.screens.length, 0), cols = Math.max(1, ...pcs.map(p => p.screens.length));
     $('screen-count').textContent = `${total} de ${max}`;
     const grid = $('screen-grid'); grid.replaceChildren(); grid.style.setProperty('--cols', cols);
@@ -181,7 +212,22 @@
   function zoom(factor) { const board = $('spatial-map'), old = view.scale, next = Math.max(.015, Math.min(.5, old * factor)), cx = board.clientWidth / 2, cy = board.clientHeight / 2; view.x = cx - (cx - view.x) * next / old; view.y = cy - (cy - view.y) * next / old; view.scale = next; draw(); }
   $('zoom-in').onclick = () => zoom(1.25); $('zoom-out').onclick = () => zoom(.8);
   $('reset-map').onclick = () => { draft.placements = M.defaults(state); dirty = true; update(); fit(); };
-  document.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { document.querySelectorAll('[data-tab]').forEach(t => { t.classList.toggle('active', t === b); t.setAttribute('aria-selected', t === b ? 'true' : 'false'); }); ['screens', 'peer', 'connection'].forEach(name => $(name + '-tab').hidden = b.dataset.tab !== name); $('savebar').hidden = b.dataset.tab !== 'screens'; if (b.dataset.tab === 'screens') fit(); });
+  document.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { document.querySelectorAll('[data-tab]').forEach(t => { t.classList.toggle('active', t === b); t.setAttribute('aria-selected', t === b ? 'true' : 'false'); }); ['screens', 'room', 'peer', 'connection'].forEach(name => $(name + '-tab').hidden = b.dataset.tab !== name); $('savebar').hidden = b.dataset.tab !== 'screens'; if (b.dataset.tab === 'screens') fit(); if (b.dataset.tab === 'room') TecRoom.render(state, true); });
+  // Quitar una pantalla del mapa (se confirma con un segundo clic) y restaurarlas.
+  let removeArmed = null, armTimer;
+  function hideScreen(key, saveNow) {
+    const p = draft.placements.find(p => M.key(p) === key); if (!p || rects().length <= 1) return;
+    p.hidden = true; dirty = true; if (selected === key) selected = M.key(rects()[0]);
+    buildNodes(); update(); fit();
+    if (saveNow) { saving = true; update(); send({ type: 'save', map: structuredClone(draft) }); } else toast('Pantalla quitada. Guarda el mapa para aplicarlo.');
+  }
+  $('remove-screen').onclick = () => {
+    if (removeArmed !== selected) { removeArmed = selected; clearTimeout(armTimer); armTimer = setTimeout(() => { removeArmed = null; update(); }, 3500); update(); return; }
+    removeArmed = null; hideScreen(selected, false);
+  };
+  $('restore-screens').onclick = () => { draft.placements.forEach(p => { delete p.hidden; }); dirty = true; buildNodes(); update(); fit(); toast('Pantallas restauradas. Revisa que no se superpongan y guarda.'); };
+  TecChat.init({ send, toast });
+  TecRoom.init({ send, toast, key: M.key, removeScreen: key => hideScreen(key, true), viewScreen: () => send({ type: 'viewScreen' }), selectScreen: key => { selected = key; update(); } });
   // Botón "Cambiar de pantalla": recorre todas las pantallas (esta PC y la otra).
   $('next-screen').onclick = () => { const all = rects(); if (!all.length) return; const i = all.findIndex(s => M.key(s) === selected); selected = M.key(all[(i + 1) % all.length]); update(); };
   // Configuración (engranaje): apariencia de la plataforma y ratón.

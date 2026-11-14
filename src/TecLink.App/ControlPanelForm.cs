@@ -30,6 +30,10 @@ public sealed class ControlPanelForm : Form
 
     private readonly Action<bool> _setPower;
     private readonly Action<string, string?> _session;
+    private readonly Action<byte[]> _cameraHandler;
+    private readonly Action<string> _peerFilesHandler;
+    private readonly Action<string, string> _chatHandler;
+    private readonly Action<byte[]> _voiceHandler;
 
     public ControlPanelForm(EdgeBridge bridge, Func<string> status, Action openViewer, Action<bool> setPower, Action<string, string?> session)
     {
@@ -40,6 +44,13 @@ public sealed class ControlPanelForm : Form
         MinimumSize = new Size(370, 600);
         StartPosition = FormStartPosition.CenterScreen;
         Controls.Add(_web);
+        _cameraHandler = frame => { if (!IsDisposed && IsHandleCreated) BeginInvoke(() => Post(new { type = "cameraFrame", data = Convert.ToBase64String(frame) })); };
+        bridge.CameraFrameReceived += _cameraHandler;
+        _peerFilesHandler = json => { if (!IsDisposed && IsHandleCreated) BeginInvoke(() => { try { Post(new { type = "peerFiles", items = JsonDocument.Parse(json).RootElement.Clone() }); } catch (JsonException) { } }); };
+        bridge.PeerFilesReceived += _peerFilesHandler;
+        _chatHandler = (from, text) => { if (!IsDisposed && IsHandleCreated) BeginInvoke(() => Post(new { type = "chat", from, text, at = DateTimeOffset.UtcNow.ToUnixTimeSeconds() })); };
+        _voiceHandler = pcm => { if (!IsDisposed && IsHandleCreated) BeginInvoke(() => Post(new { type = "voice", data = Convert.ToBase64String(pcm) })); };
+        bridge.ChatReceived += _chatHandler; bridge.VoiceReceived += _voiceHandler;
         Shown += async (_, _) => await InitializeAsync();
         FormClosing += (_, e) => { if (!_shutdown && e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; Hide(); } };
     }
@@ -62,6 +73,12 @@ public sealed class ControlPanelForm : Form
             _web.CoreWebView2.NavigationStarting += (_, e) => { if (!e.Uri.StartsWith(Origin + "/", StringComparison.OrdinalIgnoreCase)) e.Cancel = true; };
             _web.CoreWebView2.NewWindowRequested += (_, e) => e.Handled = true;
             _web.CoreWebView2.WebMessageReceived += OnMessage;
+            // The video-call bubble needs the camera, and only the panel's own pages may ask for it.
+            _web.CoreWebView2.PermissionRequested += (_, e) =>
+            {
+                e.State = e.PermissionKind is CoreWebView2PermissionKind.Camera or CoreWebView2PermissionKind.Microphone && e.Uri.StartsWith(Origin + "/", StringComparison.OrdinalIgnoreCase)
+                    ? CoreWebView2PermissionState.Allow : CoreWebView2PermissionState.Deny;
+            };
             _web.CoreWebView2.NavigationCompleted += (_, _) => RefreshState();
             _ready = true;
             _web.Source = new Uri(Origin + "/index.html");
@@ -121,14 +138,36 @@ public sealed class ControlPanelForm : Form
                     _session(root.GetProperty("action").GetString() ?? "", root.TryGetProperty("code", out var code) ? code.GetString() : null);
                     RefreshState();
                     break;
+                case "cameraFrame":
+                    if (root.GetProperty("data").GetString() is { Length: > 0 and < 700_000 } b64) _bridge.SendCameraFrame(Convert.FromBase64String(b64));
+                    break;
+                case "chat":
+                    if (!_bridge.SendChat(root.GetProperty("text").GetString() ?? "")) Post(new { type = "toast", message = "No hay nadie conectado para recibir el mensaje." });
+                    break;
+                case "voice":
+                    if (root.GetProperty("data").GetString() is { Length: > 0 and < 90_000 } voice) _bridge.SendVoice(Convert.FromBase64String(voice));
+                    break;
+                case "listFiles": Post(new { type = "myFiles", items = _bridge.Files.List() }); break;
+                case "listPeerFiles": _bridge.RequestPeerFiles(); break;
+                case "fileAction":
+                    var mine = _bridge.Files.PathInside(root.GetProperty("name").GetString() ?? "");
+                    if (mine is null) { Post(new { type = "error", message = "Ese archivo ya no está en la carpeta de TecLink." }); break; }
+                    switch (root.GetProperty("action").GetString())
+                    {
+                        case "send": _ = _bridge.Files.SendAsync(new[] { mine }); break;
+                        case "desktop": _bridge.Files.CopyToDesktop(mine); Post(new { type = "toast", message = "Puesto en tu escritorio." }); break;
+                        case "show": System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{mine}\""); break;
+                    }
+                    break;
+                case "peerFileAction": _bridge.PeerFileCommand(root.GetProperty("action").GetString() ?? "", root.GetProperty("name").GetString() ?? ""); break;
                 case "setManagement": _bridge.SetManagement(root.GetProperty("on").GetBoolean()); RefreshState(); break;
             }
         }
-        catch (Exception ex) when (ex is ArgumentException or JsonException or IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is ArgumentException or JsonException or IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
         { Post(new { type = "error", message = ex.Message }); }
     }
 
     private void Post(object message) { if (_ready && !_web.IsDisposed) _web.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(message, Json)); }
     public void RefreshState() => Post(new { type = "state", state = _bridge.ViewState(_status()) });
-    public void Shutdown() { _shutdown = true; Close(); Dispose(); }
+    public void Shutdown() { _bridge.CameraFrameReceived -= _cameraHandler; _bridge.PeerFilesReceived -= _peerFilesHandler; _bridge.ChatReceived -= _chatHandler; _bridge.VoiceReceived -= _voiceHandler; _shutdown = true; Close(); Dispose(); }
 }
