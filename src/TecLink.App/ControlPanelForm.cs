@@ -63,7 +63,10 @@ public sealed class ControlPanelForm : Form
         _controlOffHandler = () => { if (!IsDisposed && IsHandleCreated) BeginInvoke(() => { _tileControl = false; _bridge.SetViewInput(false); Post(new { type = "controlOff" }); }); };
         bridge.TileReceived += _tileHandler; bridge.RemovalAsked += _removalHandler; bridge.Notice += _noticeHandler; bridge.ViewerCloseRequested += _controlOffHandler;
         // Controlling the other PC from a tile only lasts while this window is in front.
-        Deactivate += (_, _) => { if (_tileControl) { _tileControl = false; _bridge.SetViewInput(false); Post(new { type = "controlOff" }); } };
+        // The button stays on until the person turns it off. While another window is in front the keyboard goes back to this PC
+        // (it must never be captured in the background) and control resumes by itself when the panel is used again.
+        Deactivate += (_, _) => { if (_tileControl) _bridge.SetViewInput(false); };
+        Activated += (_, _) => { if (_tileControl) { _bridge.SetViewInput(true); RefreshState(); } };
         VisibleChanged += (_, _) => { if (!Visible) _bridge.WatchScreens(false, 0); else Post(new { type = "shown" }); };
         Shown += async (_, _) => await InitializeAsync();
         FormClosing += (_, e) => { if (!_shutdown && e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; Hide(); } };
