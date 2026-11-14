@@ -11,7 +11,11 @@ internal static class CursorStyler
     public static readonly string[] Styles = { "system", "white", "black", "green", "red" };
     private static bool _custom;
 
-    public static string Normalize(string? style) => Styles.Contains(style) ? style! : "system";
+    private static readonly System.Text.RegularExpressions.Regex HexColor = new("^#[0-9a-fA-F]{6}$");
+
+    /// <summary>A preset name, or a free color as "#RRGGBB".</summary>
+    public static string Normalize(string? style) =>
+        Styles.Contains(style) ? style! : style is not null && HexColor.IsMatch(style) ? style.ToLowerInvariant() : "system";
     public static int ClampSize(int percent) => percent <= 0 ? 100 : Math.Clamp(percent, 100, 300);
 
     public static void Apply(string? style, int sizePercent)
@@ -23,7 +27,8 @@ internal static class CursorStyler
             "white" => (Color.White, Color.Black),
             "black" => (Color.FromArgb(17, 17, 17), Color.White),
             "green" => (Color.FromArgb(0, 255, 102), Color.Black),
-            _ => (Color.FromArgb(255, 59, 59), Color.White),
+            "red" => (Color.FromArgb(255, 59, 59), Color.White),
+            _ => FreeColor(style),
         };
         try
         {
@@ -57,6 +62,13 @@ internal static class CursorStyler
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.Runtime.InteropServices.ExternalException)
         { Logger.LogError(ex); }
+    }
+
+    private static (Color fill, Color edge) FreeColor(string hex)
+    {
+        var fill = Color.FromArgb(Convert.ToInt32(hex[1..], 16) | unchecked((int)0xFF000000));
+        var luminance = 0.299 * fill.R + 0.587 * fill.G + 0.114 * fill.B;
+        return (fill, luminance > 140 ? Color.Black : Color.White);
     }
 
     /// <summary>Reloads the pointers configured in Windows.</summary>

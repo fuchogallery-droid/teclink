@@ -101,6 +101,7 @@
     if (!pointerBusy) { $('speed').value = level; $('cursor-size').value = size; chosenStyle = style; }
     $('speed-label').textContent = `${$('speed').value} de 20`; $('size-label').textContent = `${$('cursor-size').value} %`;
     document.querySelectorAll('.swatch').forEach(b => b.setAttribute('aria-checked', b.dataset.style === chosenStyle ? 'true' : 'false'));
+    if (/^#[0-9a-f]{6}$/i.test(chosenStyle)) $('color-mouse').value = chosenStyle;
     $('cursor-size').disabled = chosenStyle === 'system';
     $('mouse-sync').textContent = extras ? 'Sincronizado con la otra PC.' : 'La otra PC no está conectada o necesita esta versión de TecLink: por ahora los cambios se guardan solo aquí.';
     $('peer-sync').textContent = extras ? '' : 'Conecta la otra PC con esta misma versión de TecLink para ver su pantalla y enviar archivos.';
@@ -118,6 +119,7 @@
   }
   $('speed').oninput = sendPointer; $('cursor-size').oninput = sendPointer;
   document.querySelectorAll('.swatch').forEach(b => b.onclick = () => { chosenStyle = b.dataset.style; document.querySelectorAll('.swatch').forEach(o => o.setAttribute('aria-checked', o === b ? 'true' : 'false')); $('cursor-size').disabled = chosenStyle === 'system'; sendPointer(); });
+  $('color-mouse').oninput = () => { chosenStyle = $('color-mouse').value; document.querySelectorAll('.swatch').forEach(o => o.setAttribute('aria-checked', 'false')); $('cursor-size').disabled = false; sendPointer(); };
   $('view-screen').onclick = () => send({ type: 'viewScreen' });
   $('pick-files').onclick = () => send({ type: 'pickFiles' }); $('pick-folder').onclick = () => send({ type: 'pickFolder' });
   $('open-received').onclick = () => send({ type: 'openReceived' });
