@@ -77,8 +77,20 @@
     }));
   }
 
+  // ---- Versión nueva: solo al pulsar el botón ----
+  let updateUrl = '';
+  function updateResult(m) {
+    const note = $('update-note'); $('update-check').disabled = false; $('update-check').textContent = 'Buscar versión nueva';
+    if (!m.ok) { note.textContent = 'No se pudo consultar. Revisa tu conexión a internet e inténtalo de nuevo.'; return; }
+    $('update-current').textContent = 'Instalada: ' + m.current; updateUrl = m.url;
+    $('update-get').hidden = !m.newer;
+    note.textContent = m.newer ? `Hay una versión nueva: ${m.latest}. Descárgala e instálala encima; no pierdes tu configuración.` : 'Tienes la versión más reciente.';
+  }
+
   function init(options) {
     api = options;
+    $('update-check').onclick = () => { $('update-check').disabled = true; $('update-check').textContent = 'Buscando…'; api.send({ type: 'checkUpdate' }); };
+    $('update-get').onclick = () => api.send({ type: 'openUrl', url: updateUrl });
     $('profile-pick').onclick = () => $('profile-file').click();
     $('profile-file').onchange = e => { pickPhoto(e.target.files[0]); e.target.value = ''; };
     $('profile-remove').onclick = () => { photo = ''; paint($('profile-avatar'), '', $('profile-name').value); };
@@ -89,7 +101,11 @@
     $('rooms-check').onclick = () => { $('rooms-check').disabled = true; $('rooms-check').textContent = 'Buscando…'; api.send({ type: 'checkRooms' }); };
     addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (!$('profile').hidden) openProfile(false); else if (!$('notif-pop').hidden) openNotif(false); });
   }
-  function render(newState) { state = newState; renderNotifications(); renderRooms(); }
+  function render(newState) {
+    state = newState; renderNotifications(); renderRooms();
+    // Primera vez: se invita a poner nombre y foto, para que nadie aparezca con el nombre tecnico de su computadora.
+    if (state.profile && !state.profile.name && !localStorage.getItem('tecProfileAsked')) { localStorage.setItem('tecProfileAsked', '1'); openProfile(true); }
+  }
   function roomsPresence(found) { presence = found || {}; $('rooms-check').textContent = 'Ver cuáles están activas'; $('rooms-check').disabled = false; $('rooms-list').dataset.sig = ''; if (state) renderRooms(); }
-  window.TecSocial = { init, render, roomsPresence, openProfile, paint };
+  window.TecSocial = { init, render, roomsPresence, openProfile, paint, updateResult };
 })();

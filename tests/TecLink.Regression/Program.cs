@@ -456,4 +456,24 @@ finally { try { Directory.Delete(work, true); } catch (IOException) { } }
     Check(!host.Guests.TryRead(out _), "A probe never turns into a guest (nobody is kicked out)");
     Check(SessionDiscovery.LocalSubnetCandidates().Count > 0 || true, "Local candidates can be listed");
 }
+// ---- Returning guests ask permission; a host that is busy refuses the request without kicking anyone out ----
+{
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+    const string Code = "K7M4QX";
+    var busy = false;
+    await using var host = new HostAdmission(0, () => Code, TimeSpan.FromSeconds(2), cts.Token, () => busy);
+    await using var asker = await PeerServer.ConnectAsync("127.0.0.1", host.Port, cts.Token);
+    await asker.SendAsync(WireMessage.Join(Code + "\u001fask\u001fAna"));
+    var admitted = await host.Guests.ReadAsync(cts.Token);
+    Check(admitted is not null, "A request with the right code reaches the host to be decided");
+    busy = true;
+    await using var second = await PeerServer.ConnectAsync("127.0.0.1", host.Port, cts.Token);
+    var answer = new TaskCompletionSource<WireMessage>();
+    second.MessageReceived += m => { if (m.Type == MessageType.JoinResult) answer.TrySetResult(m); };
+    second.StartReceiving();
+    await second.SendAsync(WireMessage.Join(Code + "\u001fask\u001fLuis"));
+    var refused = await answer.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    Check(!refused.Accepted && refused.Text!.Contains("otra persona"), "A busy host refuses a request politely");
+    Check(!host.Guests.TryRead(out _), "A refused request never becomes a guest (the current one stays)");
+}
 Console.WriteLine($"PASS: {checks} geometry, input, map, TCP, pointer and file-transfer regression checks");

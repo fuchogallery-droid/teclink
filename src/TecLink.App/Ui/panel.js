@@ -19,6 +19,7 @@
     if (message.type === 'controlOff') { TecRoom.controlOff(); return; }
     if (message.type === 'shown') { TecRoom.shown(); return; }
     if (message.type === 'removeAsk') { askConsent(message); return; }
+    if (message.type === 'update') { TecSocial.updateResult(message); return; }
     if (message.type === 'roomsPresence') { TecSocial.roomsPresence(message.found); return; }
     if (message.type === 'myFiles' || message.type === 'peerFiles') return;
     if (message.type === 'chat') { TecChat.incoming(message.from, message.text, message.at); return; }

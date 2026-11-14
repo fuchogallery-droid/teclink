@@ -91,7 +91,7 @@
     const node = document.createElement('div'); node.className = 'room-card ' + item.kind; node.dataset.key = item.key; node.tabIndex = 0;
     if (item.kind === 'screen') {
       node.setAttribute('role', 'group');
-      node.innerHTML = '<div class="rc-head"><div class="rc-title"><strong></strong><small></small></div><button class="rc-release primary" type="button" hidden>Soltar control</button><button class="rc-exit secondary" type="button" hidden>Salir de pantalla completa</button></div>' +
+      node.innerHTML = '<div class="rc-head"><div class="rc-title"><strong></strong><small></small></div><em class="rc-fps" title="Cuadros por segundo y datos que llegan de esta pantalla"></em><button class="rc-release primary" type="button" hidden>Soltar control</button><button class="rc-exit secondary" type="button" hidden>Salir de pantalla completa</button></div>' +
         '<div class="rc-view"><img class="rc-img" alt="" draggable="false" hidden><p class="rc-wait"></p><div class="rc-actions"><button class="secondary" data-act="full" type="button">Extender pantalla</button><button class="secondary" data-act="screenfull" type="button">Pantalla completa</button><button class="secondary" data-act="control" type="button">Controlar</button><button class="secondary" data-act="hide" type="button">Ocultar</button><button class="secondary danger" data-act="remove" type="button">Quitar</button></div></div>';
       node.querySelector('.rc-head').onpointerdown = e => { if (!e.target.closest('button')) startDrag(e, node, item.key, 'move'); };
       node.querySelector('.rc-actions').onclick = e => { const act = e.target.closest('button')?.dataset.act; if (act) action(item, act); };
@@ -301,7 +301,12 @@
     const node = room().querySelector(`[data-key="${CSS.escape(key)}"]`);
     if (node && !node.classList.contains('offline')) { const img = node.querySelector('.rc-img'); img.src = url; if (img.hidden) { img.hidden = false; node.querySelector('.rc-wait').hidden = true; } }
     if (old) setTimeout(() => URL.revokeObjectURL(old), 1500);
+    // Medidor: cuadros por segundo y peso de lo que llega, para ver si la transmision va fluida.
+    const s = stats[key] ??= { n: 0, bytes: 0, at: performance.now() }; s.n++; s.bytes += bytes.length;
+    const now = performance.now();
+    if (now - s.at >= 1000) { const fps = Math.round(s.n * 1000 / (now - s.at)), kb = Math.round(s.bytes / 1024 / ((now - s.at) / 1000)); const badge = node?.querySelector('.rc-fps'); if (badge) badge.textContent = `${fps} cuadros/s · ${kb} KB/s`; s.n = 0; s.bytes = 0; s.at = now; }
   }
+  const stats = {};
 
   // ---- Camara y recorte de fondo ----
   function loadSegmenter() {

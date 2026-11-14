@@ -198,6 +198,32 @@ public sealed class ControlPanelForm : Form
                     System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(_bridge.Files.ReceiveFolder) { UseShellExecute = true });
                     break;
                 case "setPower": _setPower(root.GetProperty("on").GetBoolean()); RefreshState(); break;
+                case "checkUpdate":
+                    // Only when the person presses the button: TecLink never contacts anything by itself.
+                    _ = Task.Run(async () =>
+                    {
+                        object result;
+                        try
+                        {
+                            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+                            http.DefaultRequestHeaders.UserAgent.ParseAdd("TecLink-update-check");
+                            using var doc = JsonDocument.Parse(await http.GetStringAsync("https://api.github.com/repos/fuchogallery-droid/teclink/releases/latest"));
+                            var tag = doc.RootElement.GetProperty("tag_name").GetString() ?? "";
+                            var page = doc.RootElement.GetProperty("html_url").GetString() ?? "";
+                            var current = typeof(ControlPanelForm).Assembly.GetName().Version ?? new Version(0, 0);
+                            var newer = Version.TryParse(tag.TrimStart('v'), out var latest) && latest > new Version(current.Major, current.Minor, Math.Max(0, current.Build));
+                            result = new { type = "update", ok = true, newer, latest = tag.TrimStart('v'), current = $"{current.Major}.{current.Minor}.{Math.Max(0, current.Build)}", url = page };
+                        }
+                        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException or KeyNotFoundException)
+                        { result = new { type = "update", ok = false }; }
+                        if (!IsDisposed && IsHandleCreated) BeginInvoke(() => Post(result));
+                    });
+                    break;
+                case "openUrl":
+                    var wanted = root.GetProperty("url").GetString() ?? "";
+                    if (wanted.StartsWith("https://github.com/fuchogallery-droid/teclink/releases", StringComparison.Ordinal))
+                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(wanted) { UseShellExecute = true });
+                    break;
                 case "roomFullscreen": SetRoomFullscreen(root.GetProperty("on").GetBoolean()); break;
                 case "setProfile":
                     _bridge.SetProfile(root.TryGetProperty("name", out var pName) ? pName.GetString() : null, root.TryGetProperty("pc", out var pPc) ? pPc.GetString() : null,

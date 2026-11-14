@@ -340,3 +340,6 @@ body.cinema .room-card.bubble .rc-resize{display:block}
 body.cinema #chat-panel.at-left{left:14px;right:auto}
 body.cinema #chat-panel.at-top{top:14px;bottom:auto}
 body.cinema #chat-panel{transition:none}
+
+.rc-fps{font-style:normal;font-size:11px;color:var(--muted);margin-left:auto;padding:0 8px;white-space:nowrap}
+.update-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
