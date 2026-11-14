@@ -162,18 +162,20 @@
     img.addEventListener('wheel', e => { if (!on()) return; e.preventDefault(); api.send({ type: 'tileWheel', delta: e.deltaY < 0 ? 120 : -120 }); }, { passive: false });
   }
 
-  function scaleBubble(key, node, k) { const l = layout()[key], s = Math.round(Math.min(480, Math.max(MIN.bubble[0], l.w * k))); l.w = l.h = s; apply(node, key); save(); fitRoom(); }
+  // La camara puede crecer hasta llenar casi toda la sala (muy grande).
+  const bubbleMax = () => Math.max(480, Math.min(1600, Math.round(Math.min(room().clientWidth || 900, cinema ? room().clientHeight || 900 : 1600) * 0.95)));
+  function scaleBubble(key, node, k) { const l = layout()[key], s = Math.round(Math.min(bubbleMax(), Math.max(MIN.bubble[0], l.w * k))); l.w = l.h = s; apply(node, key); save(); fitRoom(); }
 
   function startDrag(e, node, key, mode) {
-    if (e.button !== 0 || store.locked || full || cinema) return;
+    if (e.button !== 0 || store.locked || full || (cinema && !node.classList.contains('bubble'))) return;
     e.preventDefault(); e.stopPropagation();
     const l = layout()[key], start = { x: e.clientX, y: e.clientY, l: { ...l } }, bubble = node.classList.contains('bubble'), id = e.pointerId;
     l.z = ++top + (bubble ? 1000 : 0); node.style.zIndex = l.z;
     const target = e.currentTarget;
     const moveHandler = ev => {
       const dx = ev.clientX - start.x, dy = ev.clientY - start.y, W = room().clientWidth;
-      if (mode === 'move') { l.x = Math.max(0, Math.min(W - 40, start.l.x + dx)); l.y = Math.max(0, start.l.y + dy); }
-      else if (bubble) { const s = Math.max(MIN.bubble[0], Math.min(480, start.l.w + Math.max(dx, dy))); l.w = l.h = s; }
+      if (mode === 'move') { l.x = Math.max(0, Math.min(W - 40, start.l.x + dx)); l.y = Math.max(0, Math.min(cinema ? Math.max(0, room().clientHeight - 40) : 1e6, start.l.y + dy)); }
+      else if (bubble) { const s = Math.max(MIN.bubble[0], Math.min(bubbleMax(), start.l.w + Math.max(dx, dy))); l.w = l.h = s; }
       else { l.w = Math.max(MIN.card[0], start.l.w + dx); l.h = Math.max(MIN.card[1], start.l.h + dy); }
       apply(node, key); fitRoom();
     };

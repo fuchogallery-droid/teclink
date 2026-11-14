@@ -39,14 +39,35 @@
   }
 
   // ---- Burbuja: abre y cierra el chat; se puede subir o bajar arrastrandola ----
-  function place() { el['chat-bubble'].style.top = `calc(${topPct}% - 28px)`; }
+  // El boton se arrastra a donde quieras y se pega al borde mas cercano (arriba, abajo, izquierda o derecha, incluidas las esquinas).
+  let spot = (() => { try { const s = JSON.parse(localStorage.getItem('tecChatSpot') || 'null'); if (s && ['left', 'right', 'top', 'bottom'].includes(s.edge)) return { edge: s.edge, pos: Math.max(5, Math.min(95, +s.pos || 55)) }; } catch { /* sin guardar */ } return { edge: 'right', pos: 55 }; })();
+  function place() {
+    const b = el['chat-bubble'], s = b.style, p = spot.pos, half = (b.offsetWidth || 56) / 2;
+    s.top = s.bottom = s.left = s.right = 'auto';
+    if (spot.edge === 'right') { s.right = '16px'; s.top = `calc(${p}% - ${half}px)`; }
+    else if (spot.edge === 'left') { s.left = '16px'; s.top = `calc(${p}% - ${half}px)`; }
+    else if (spot.edge === 'top') { s.top = '16px'; s.left = `calc(${p}% - ${half}px)`; }
+    else { s.bottom = '16px'; s.left = `calc(${p}% - ${half}px)`; }
+    // El panel flotante se abre del mismo lado donde esta el boton.
+    const x = spot.edge === 'left' ? 0 : spot.edge === 'right' ? 100 : p, y = spot.edge === 'top' ? 0 : spot.edge === 'bottom' ? 100 : p;
+    el['chat-panel'].classList.toggle('at-left', x < 50); el['chat-panel'].classList.toggle('at-top', y < 50);
+  }
   function drag(e) {
-    if (e.button !== 0) return; const b = el['chat-bubble'], startY = e.clientY; let moved = false;
+    if (e.button !== 0) return; const b = el['chat-bubble'], sx = e.clientX, sy = e.clientY; let moved = false;
     b.setPointerCapture(e.pointerId);
-    const move = ev => { if (!moved && Math.abs(ev.clientY - startY) < 6) return; moved = true; b.style.transition = 'none'; b.style.top = ev.clientY - 28 + 'px'; };
+    const move = ev => {
+      if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 6) return;
+      moved = true; b.style.transition = 'none'; const h = b.offsetWidth / 2;
+      b.style.right = b.style.bottom = 'auto'; b.style.left = Math.max(0, Math.min(innerWidth - b.offsetWidth, ev.clientX - h)) + 'px'; b.style.top = Math.max(0, Math.min(innerHeight - b.offsetHeight, ev.clientY - h)) + 'px';
+    };
     const end = ev => {
       b.removeEventListener('pointermove', move); b.removeEventListener('pointerup', end); b.removeEventListener('pointercancel', end); b.style.transition = '';
-      if (moved) { topPct = Math.max(12, Math.min(88, ev.clientY / innerHeight * 100)); localStorage.setItem('tecChatTop', String(Math.round(topPct))); place(); b.dataset.moved = '1'; setTimeout(() => delete b.dataset.moved, 0); }
+      if (moved) {
+        const x = ev.clientX, y = ev.clientY, d = { left: x, right: innerWidth - x, top: y, bottom: innerHeight - y };
+        const edge = Object.keys(d).reduce((a, k) => d[k] < d[a] ? k : a, 'right');
+        spot = { edge, pos: Math.round(Math.max(5, Math.min(95, (edge === 'left' || edge === 'right' ? y / innerHeight : x / innerWidth) * 100))) };
+        localStorage.setItem('tecChatSpot', JSON.stringify(spot)); place(); b.dataset.moved = '1'; setTimeout(() => delete b.dataset.moved, 0);
+      }
     };
     b.addEventListener('pointermove', move); b.addEventListener('pointerup', end); b.addEventListener('pointercancel', end);
   }
@@ -197,6 +218,9 @@
     addEventListener('pointerdown', () => { if (spk.ctx?.state === 'suspended') spk.ctx.resume().catch(() => {}); }, { passive: true });
     navigator.mediaDevices?.addEventListener?.('devicechange', listDevices);
     sync(); people();
+    // El boton cambia de tamano en pantalla completa: se vuelve a colocar con su medida real.
+    new MutationObserver(place).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    addEventListener('resize', place);
   }
   function render(newState) { state = newState; if (el['chat-bubble']) people(); }
   window.TecChat = { init, render, incoming, voice, system, reset, isOpen: () => open, open: () => setOpen(true) };

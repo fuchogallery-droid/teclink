@@ -334,3 +334,9 @@ body.cinema .chat-voice{display:none}
 
 /* Los paneles de configuracion y avisos van por encima de la pantalla completa y del chat */
 #settings-scrim{z-index:94}#settings-drawer{z-index:95}#notif-pop{z-index:93}#profile-scrim{z-index:96}#profile{z-index:97}#consent-scrim{z-index:98}#consent{z-index:99}
+
+/* Camara flotante en pantalla completa: se mueve y se agranda; el chat se abre del lado del boton */
+body.cinema .room-card.bubble .rc-resize{display:block}
+body.cinema #chat-panel.at-left{left:14px;right:auto}
+body.cinema #chat-panel.at-top{top:14px;bottom:auto}
+body.cinema #chat-panel{transition:none}
