@@ -15,7 +15,7 @@
     document.body.append(bubble);
     const panel = document.createElement('aside'); panel.id = 'chat-panel'; panel.hidden = true; panel.setAttribute('aria-labelledby', 'chat-title');
     panel.innerHTML = `
-      <header class="chat-head"><div><h2 id="chat-title">Sala en vivo</h2><small id="chat-people"></small></div><button id="chat-close" class="secondary" type="button" aria-label="Cerrar el chat">✕</button></header>
+      <header class="chat-head"><div><h2 id="chat-title">Sala en vivo</h2><small id="chat-people"></small></div><button id="chat-files-btn" class="secondary" type="button" aria-label="Archivos compartidos" title="Archivos compartidos">${icon('<path d="M4 6a2 2 0 012-2h4l2 2h6a2 2 0 012 2v9a2 2 0 01-2 2H6a2 2 0 01-2-2z"/>')}</button><button id="chat-skin-btn" class="secondary" type="button" aria-label="Diseños y colores" title="Diseños y colores">${icon('<circle cx="12" cy="12" r="9"/><circle cx="8.5" cy="10" r="1.2"/><circle cx="12" cy="7.5" r="1.2"/><circle cx="15.5" cy="10" r="1.2"/><path d="M12 21a2 2 0 010-4h1.5a2.5 2.5 0 000-5"/>')}</button><button id="chat-gear-btn" class="secondary" type="button" aria-label="Configuración" title="Configuración">${icon('<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/>')}</button><button id="chat-close" class="secondary" type="button" aria-label="Cerrar el chat">✕</button></header>
       <div id="chat-cams" class="chat-cams" aria-label="Cámaras de la sala"></div>
       <div class="chat-tools" role="toolbar" aria-label="Controles de la sala">
         <button id="tool-mic" class="tool" type="button" data-mic-switch aria-pressed="false">${icon('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3"/>')}<span>Micrófono</span></button>
@@ -23,6 +23,7 @@
         <button id="tool-mouse" class="tool" type="button">${icon('<path d="M6 3v15l4-3.5 3 6.5 2.5-1.2-3-6.3H18z"/>')}<span>Controlar</span></button>
         <button id="tool-files" class="tool" type="button">${icon('<path d="M12 16V4m0 0-4 4m4-4 4 4M4 15v3a2 2 0 002 2h12a2 2 0 002-2v-3"/>')}<span>Enviar archivos</span></button>
       </div>
+      <details id="chat-files" class="chat-files"><summary><span>Archivos compartidos</span><b id="chat-files-count">0</b></summary><ul id="chat-share-list" class="chat-share-list"></ul></details>
       <ul id="chat-log" class="chat-log" aria-live="polite"></ul>
       <form id="chat-form" class="chat-form"><label class="sr" for="chat-input">Mensaje</label><input id="chat-input" type="text" autocomplete="off" maxlength="2000" placeholder="Escribe un mensaje…"><button id="chat-send" class="primary" type="submit">Enviar</button></form>
       <details class="chat-voice"><summary>Ajustes de voz</summary>
@@ -34,7 +35,7 @@
         <p id="voice-note" class="map-note" role="status"></p>
       </details>`;
     (document.querySelector('.shell') || document.body).append(panel);
-    for (const id of ['chat-bubble', 'chat-badge', 'chat-panel', 'chat-close', 'chat-send', 'chat-log', 'chat-form', 'chat-input', 'chat-people', 'tool-mouse', 'tool-files', 'mic-toggle', 'mic-meter', 'mic-device', 'mic-ptt', 'mic-hold', 'voice-volume', 'voice-note']) el[id] = document.getElementById(id);
+    for (const id of ['chat-bubble', 'chat-badge', 'chat-panel', 'chat-close', 'chat-send', 'chat-log', 'chat-form', 'chat-input', 'chat-people', 'tool-mouse', 'tool-files', 'mic-toggle', 'mic-meter', 'mic-device', 'mic-ptt', 'mic-hold', 'voice-volume', 'voice-note', 'chat-files', 'chat-files-count', 'chat-share-list', 'chat-files-btn', 'chat-skin-btn', 'chat-gear-btn']) el[id] = document.getElementById(id);
   }
 
   // ---- Burbuja: abre y cierra el chat; se puede subir o bajar arrastrandola ----
@@ -154,6 +155,21 @@
     m.classList.toggle('on', mode === 'remote'); m.disabled = !state?.connected || (mode === 'local' && state.sessionMode && !state.management);
     m.title = m.disabled && state?.connected ? 'El dueño de la sala debe activar la gestión de pantallas.' : '';
     el['tool-files'].disabled = !state?.extras;
+    files();
+  }
+  // Historial compacto de lo compartido, desplegable dentro del panel flotante.
+  let filesSig = '';
+  function files() {
+    const list = state?.shares || [], sig = JSON.stringify(list); if (sig === filesSig) return; filesSig = sig;
+    el['chat-files-count'].textContent = list.length;
+    if (!list.length) { const li = document.createElement('li'); li.className = 'empty'; li.textContent = 'Todavía no se compartió nada.'; el['chat-share-list'].replaceChildren(li); return; }
+    el['chat-share-list'].replaceChildren(...list.slice().reverse().map(f => {
+      const li = document.createElement('li'), info = document.createElement('div'), name = document.createElement('strong'), meta = document.createElement('small'), acts = document.createElement('div');
+      name.textContent = f.name; name.title = f.name; meta.textContent = new Date(f.at * 1000).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' }) + ' · ' + (f.mine ? 'Tú' : f.sender); info.append(name, meta); acts.className = 'acts';
+      const add = (path, label, action) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'secondary'; b.title = label; b.setAttribute('aria-label', label + ': ' + f.name); b.innerHTML = icon(path); b.onclick = () => api.send({ type: 'shareAction', id: f.id, action }); acts.append(b); };
+      add('<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>', 'Ver', 'view'); add('<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8"/>', 'Copiar al escritorio', 'desktop');
+      li.append(info, acts); return li;
+    }));
   }
   setInterval(() => { if (state) people(); }, 700);
 
@@ -162,6 +178,9 @@
     el['chat-bubble'].addEventListener('pointerdown', drag);
     el['chat-bubble'].addEventListener('click', () => { if (el['chat-bubble'].dataset.moved) return; setOpen(!open); });
     el['chat-close'].onclick = () => setOpen(false);
+    el['chat-files-btn'].onclick = () => { el['chat-files'].open = !el['chat-files'].open; if (el['chat-files'].open) el['chat-files'].scrollIntoView({ block: 'nearest' }); };
+    el['chat-gear-btn'].onclick = () => document.getElementById('settings-open').click();
+    el['chat-skin-btn'].onclick = () => { document.getElementById('settings-open').click(); document.getElementById('skin-title')?.scrollIntoView({ block: 'start' }); };
     el['chat-form'].onsubmit = sendText;
     el['chat-panel'].addEventListener('keydown', e => { if (e.key === 'Escape') setOpen(false); });
     document.querySelectorAll('[data-mic-switch]').forEach(b => b.onclick = () => setMic(!mic.on));

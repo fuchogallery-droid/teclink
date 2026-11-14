@@ -5,7 +5,7 @@
 (() => {
   const $ = id => document.getElementById(id);
   const MIN = { card: [220, 150], bubble: [90, 90] };
-  let api = {}, state, store = readStore(), top = 10, signature = '', camSignature = '', active = false, docked = false, full = null, control = null, lastWatch = '', lastMove = 0;
+  let api = {}, state, store = readStore(), top = 10, signature = '', camSignature = '', active = false, docked = false, full = null, control = null, floated = { me: false, peer: false }, lastWatch = '', lastMove = 0;
   const cam = { on: false, cutout: true, mirror: true, stream: null, seg: null, segLoading: null, lastSent: 0, loop: 0 };
   const peer = { last: 0, cutout: false, url: '' };
   const pictures = {}; // key -> object URL of the latest live picture
@@ -34,7 +34,8 @@
   }
   function items() {
     const list = screens().filter(i => !layout()[i.key]?.hidden);
-    if (!docked) { if (cam.on) list.push({ key: 'cam:me', kind: 'bubble', mine: true }); if (peerCamShown()) list.push({ key: 'cam:peer', kind: 'bubble', mine: false }); }
+    if ((!docked || floated.me) && cam.on) list.push({ key: 'cam:me', kind: 'bubble', mine: true });
+    if ((!docked || floated.peer) && peerCamShown()) list.push({ key: 'cam:peer', kind: 'bubble', mine: false });
     return list;
   }
 
@@ -61,17 +62,17 @@
   }
 
   // Pantalla completa de toda la sala: las tarjetas visibles se reparten TODA la ventana con la division elegida (Auto, 1, 2, 3, 4).
-  let cinema = false, cinemaSlots = {};
+  let cinema = false, cinemaOnly = null, cinemaSlots = {};
   function computeCinema(list) {
-    const shown = list.filter(i => i.kind === 'screen'), W = room().clientWidth, H = room().clientHeight; cinemaSlots = {};
+    const shown = list.filter(i => i.kind === 'screen' && (!cinemaOnly || i.key === cinemaOnly)), W = room().clientWidth, H = room().clientHeight; cinemaSlots = {};
     if (!shown.length || !W || !H) return;
     const gap = 8, cols = Math.min(shown.length, store.cols || Math.ceil(Math.sqrt(shown.length))), rows = Math.ceil(shown.length / cols);
     const w = Math.floor((W - gap * (cols + 1)) / cols), h = Math.floor((H - gap * (rows + 1)) / rows);
     shown.forEach((item, i) => { cinemaSlots[item.key] = { x: gap + (i % cols) * (w + gap), y: gap + Math.floor(i / cols) * (h + gap), w, h, z: 1 }; });
   }
-  function setCinema(on) {
-    if (cinema === on) return;
-    cinema = on; document.body.classList.toggle('cinema', on); $('cinema-bar').hidden = !on; $('room-cinema').setAttribute('aria-pressed', on);
+  function setCinema(on, only) {
+    if (cinema === on && (!on || (only || null) === cinemaOnly)) return;
+    cinema = on; cinemaOnly = on ? only || null : null; document.body.classList.toggle('cinema', on); $('cinema-bar').hidden = !on; $('room-cinema').setAttribute('aria-pressed', on);
     api.send({ type: 'roomFullscreen', on }); signature = ''; lastWatch = '';
     if (on) { full = null; if (control) setControl(null); }
     requestAnimationFrame(() => render(undefined, true));
@@ -96,16 +97,18 @@
       node.querySelector('.rc-actions').onclick = e => { const act = e.target.closest('button')?.dataset.act; if (act) action(item, act); };
       node.querySelector('.rc-exit').onclick = () => setFull(null);
       node.querySelector('.rc-release').onclick = () => setControl(null);
-      node.querySelector('.rc-head').ondblclick = () => setFull(full === item.key ? null : item.key);
+      // Doble clic: normal -> pantalla extendida -> pantalla completa (llena toda la ventana) -> normal.
+      node.ondblclick = e => { if (e.target.closest('button') || control === item.key) return; if (cinema) setCinema(false); else if (full === item.key) setCinema(true, item.key); else setFull(item.key); };
       wireControl(node.querySelector('.rc-img'), item);
       if (pictures[item.key]) { const img = node.querySelector('.rc-img'); img.src = pictures[item.key]; img.hidden = false; }
     } else {
-      node.innerHTML = '<div class="bubble-media"></div><div class="bubble-bar"><span class="bubble-name"></span><button class="b-minus secondary" type="button" aria-label="Más pequeña">−</button><button class="b-plus secondary" type="button" aria-label="Más grande">+</button>' + (item.mine ? '<button class="b-off secondary" type="button" aria-label="Apagar cámara">✕</button>' : '') + '</div>';
+      node.innerHTML = '<div class="bubble-media"></div><div class="bubble-bar"><span class="bubble-name"></span><button class="b-minus secondary" type="button" aria-label="Más pequeña">−</button><button class="b-plus secondary" type="button" aria-label="Más grande">+</button>' + '<button class="b-dock secondary" type="button" aria-label="Volver al panel" title="Volver al panel del chat">⇲</button>' + (item.mine ? '<button class="b-off secondary" type="button" aria-label="Apagar cámara">✕</button>' : '') + '</div>';
       mountMedia(node.querySelector('.bubble-media'), item.mine);
       node.onpointerdown = e => { if (!e.target.closest('button,.rc-resize')) startDrag(e, node, item.key, 'move'); };
       node.querySelector('.b-minus').onclick = () => scaleBubble(item.key, node, .85);
       node.querySelector('.b-plus').onclick = () => scaleBubble(item.key, node, 1.18);
       node.querySelector('.b-off')?.addEventListener('click', () => setCamera(false));
+      node.querySelector('.b-dock').onclick = () => setFloat(item.mine ? 'me' : 'peer', false);
       node.addEventListener('wheel', e => { e.preventDefault(); scaleBubble(item.key, node, e.deltaY < 0 ? 1.08 : .92); }, { passive: false });
     }
     const handle = document.createElement('div'); handle.className = 'rc-resize'; handle.setAttribute('role', 'separator'); handle.setAttribute('aria-label', 'Cambiar tamaño');
@@ -215,7 +218,11 @@
         node.classList.toggle('cutout', item.mine ? cam.cutout : peer.cutout); node.classList.toggle('mirror', item.mine && cam.mirror);
       }
     }
-    if (cinema) for (const item of list) { const node = room().querySelector(`[data-key="${CSS.escape(item.key)}"]`); if (node) apply(node, item.key); }
+    for (const item of list) {
+      const node = room().querySelector(`[data-key="${CSS.escape(item.key)}"]`); if (!node) continue;
+      if (item.kind === 'screen') node.style.display = cinema && !cinemaSlots[item.key] ? 'none' : '';
+      if (cinema) apply(node, item.key);
+    }
     video.hidden = !!(cam.cutout && cam.seg); own.hidden = !(cam.cutout && cam.seg);
     fitRoom(); syncWatch();
   }
@@ -224,14 +231,17 @@
   function renderCams() {
     const host = $('chat-cams'); if (!host) return;
     const people = docked ? [{ who: 'me', name: 'Tú', on: cam.on }].concat(state.connected ? [{ who: 'peer', name: state.remoteName || 'Otra PC', on: peerCamShown() }] : []) : [];
-    const sig = people.map(p => p.who + p.on).join('|');
+    const sig = people.map(p => p.who + p.on + !!floated[p.who]).join('|');
     if (sig !== camSignature) {
-      camSignature = sig; host.replaceChildren(); host.style.setProperty('--cams', Math.max(1, Math.min(3, people.length)));
+      camSignature = sig; host.replaceChildren(); host.style.setProperty('--cams', Math.max(1, people.length));
       for (const p of people) {
-        const cell = document.createElement('div'); cell.className = 'cam-cell'; cell.dataset.who = p.who;
-        cell.innerHTML = '<div class="cam-media"></div><span class="cam-name"></span>';
-        if (p.on) mountMedia(cell.querySelector('.cam-media'), p.who === 'me');
-        else { const off = document.createElement('span'); off.className = 'cam-off'; off.textContent = (p.name === 'Tú' ? state.machineName || 'Tú' : p.name).slice(0, 2).toUpperCase(); cell.querySelector('.cam-media').append(off); }
+        const cell = document.createElement('div'); cell.className = 'cam-cell' + (floated[p.who] && p.on ? ' is-floating' : ''); cell.dataset.who = p.who;
+        cell.innerHTML = '<div class="cam-media"></div><span class="cam-name"></span><button class="cam-float secondary" type="button"></button>';
+        const btn = cell.querySelector('.cam-float'), isFloating = !!floated[p.who] && p.on;
+        btn.hidden = !p.on; btn.textContent = isFloating ? '⇲' : '⇱'; btn.title = isFloating ? 'Volver al panel' : 'Sacar la cámara a una ventana flotante'; btn.setAttribute('aria-label', btn.title);
+        btn.onclick = () => setFloat(p.who, !isFloating);
+        if (p.on && !isFloating) mountMedia(cell.querySelector('.cam-media'), p.who === 'me');
+        else { const off = document.createElement('span'); off.className = 'cam-off'; off.textContent = isFloating ? 'Flotando' : (p.name === 'Tú' ? state.machineName || 'Tú' : p.name).slice(0, 2).toUpperCase(); cell.querySelector('.cam-media').append(off); }
         host.append(cell);
       }
     }
@@ -240,6 +250,13 @@
       cell.querySelector('.cam-name').textContent = p.name + (p.on ? '' : ' · cámara apagada');
       cell.classList.toggle('cutout', p.who === 'me' ? cam.cutout && !!cam.seg : peer.cutout); cell.classList.toggle('mirror', p.who === 'me' && cam.mirror);
     }
+  }
+
+  // Una camara del panel se puede sacar a una burbuja flotante sobre las pantallas, y volver.
+  function setFloat(who, value) {
+    floated[who] = value; signature = ''; camSignature = '';
+    if (value) { const key = 'cam:' + who; if (layout()[key]) delete layout()[key]; }
+    render(undefined, true);
   }
 
   function updateToolbar() {
@@ -384,7 +401,7 @@
     }).observe(room());
   }
   window.TecRoom = {
-    init, render, peerFrame, tile, controlOff,
+    init, render, peerFrame, tile, controlOff, floatCam: setFloat,
     setActive(value) { active = value; lastWatch = ''; if (!value) setCinema(false); if (!value && control) setControl(null); if (state) render(undefined, true); },
     setDocked(value) { docked = value; signature = ''; camSignature = ''; if (state) render(); },
     shown() { lastWatch = ''; syncWatch(); },

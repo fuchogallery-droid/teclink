@@ -301,3 +301,36 @@ body.cinema #chat-bubble{display:none}
 .mini-switch:disabled{opacity:1}.mini-switch:disabled .track{opacity:.5}.mini-switch:disabled .sw-label{color:var(--text)}
 
 body.cinema .rc-resize{display:none}
+
+/* Pantalla completa: el chat es un panel flotante pequeño, no una columna */
+body.cinema #chat-bubble{display:grid;width:44px;height:44px;right:14px;z-index:92}
+body.cinema #chat-bubble svg{width:21px;height:21px}
+body.cinema.chat-open #chat-bubble{display:none}
+body.cinema #chat-panel{position:fixed;right:14px;bottom:14px;top:auto;left:auto;width:min(340px,calc(100vw - 28px));height:min(540px,78vh);flex:none;min-width:0;max-width:none;border:1px solid var(--line);border-radius:14px;box-shadow:0 14px 44px rgba(0,0,0,.65);z-index:91}
+.chat-head button{display:inline-grid;place-items:center;min-width:34px;min-height:34px;padding:0 6px}
+.chat-head button svg{width:17px;height:17px}
+body.cinema .chat-tools{grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;padding:8px 10px}
+body.cinema .chat-tools .tool{justify-content:center;padding:0;min-height:36px}
+body.cinema .chat-tools .tool span{display:none}
+body.cinema .chat-voice{display:none}
+
+/* Camaras del panel: cuadros pequenos en una tira que se desplaza */
+.chat-cams{display:flex;gap:8px;overflow-x:auto;scroll-snap-type:x mandatory;padding:8px 10px;scrollbar-width:thin}
+.chat-cams .cam-cell{flex:0 0 112px;aspect-ratio:4/3;scroll-snap-align:start}
+.cam-float{position:absolute;top:4px;right:4px;min-width:26px;min-height:26px;padding:0;font-size:14px;line-height:1;background:rgba(0,0,0,.65);border-color:transparent;color:#fff;z-index:2}
+.cam-cell.is-floating .cam-off{font-size:11px}
+.b-dock{display:none}body.chat-open .b-dock{display:inline-block}
+
+/* Archivos compartidos, desplegable */
+.chat-files{border-bottom:1px solid var(--line)}
+.chat-files>summary{cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 12px;font-size:13px;min-height:36px}
+.chat-files>summary b{font-size:12px;border:1px solid var(--line);border-radius:999px;padding:1px 8px;color:var(--muted)}
+.chat-share-list{list-style:none;margin:0;padding:0 10px 10px;display:flex;flex-direction:column;gap:6px;max-height:170px;overflow:auto}
+.chat-share-list li{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:8px;padding:6px 8px;background:var(--bg)}
+.chat-share-list li>div:first-child{flex:1;min-width:0;display:flex;flex-direction:column}
+.chat-share-list strong{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.chat-share-list small{color:var(--muted)}
+.chat-share-list .acts{display:flex;gap:4px}.chat-share-list .acts button{min-width:32px;min-height:32px;padding:0;display:grid;place-items:center}.chat-share-list .acts svg{width:16px;height:16px}
+.chat-share-list .empty{display:block;border:0;background:none;color:var(--muted);font-size:12px}
+
+/* Los paneles de configuracion y avisos van por encima de la pantalla completa y del chat */
+#settings-scrim{z-index:94}#settings-drawer{z-index:95}#notif-pop{z-index:93}#profile-scrim{z-index:96}#profile{z-index:97}#consent-scrim{z-index:98}#consent{z-index:99}
