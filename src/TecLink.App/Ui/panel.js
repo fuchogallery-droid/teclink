@@ -136,7 +136,7 @@
   document.querySelectorAll('[data-dx]').forEach(b => b.onclick = () => move(+b.dataset.dx, +b.dataset.dy));
   ['x', 'y'].forEach(axis => $('position-' + axis).onchange = e => { const p = draft.placements.find(p => M.key(p) === selected), n = Number(e.target.value); if (p && Number.isInteger(n) && Math.abs(n) <= 1000000) { p[axis] = n; dirty = true; update(); } });
   $('automatic').onchange = e => { draft.automatic = e.target.checked; dirty = true; update(); };
-  $('theme').onchange = e => { draft.theme = e.target.value; dirty = true; theme(); update(); };
+  $('theme').onchange = e => { draft.theme = e.target.value; dirty = true; theme(); applyColors(); update(); };
   $('save').onclick = () => { if (saving || M.overlaps(rects())) return; saving = true; update(); send({ type: 'save', map: structuredClone(draft) }); };
   $('toggle-control').onclick = () => send({ type: 'toggleControl' });
   $('power').onclick = () => send({ type: 'setPower', on: $('power').getAttribute('aria-pressed') !== 'true' });
@@ -144,7 +144,24 @@
   function zoom(factor) { const board = $('spatial-map'), old = view.scale, next = Math.max(.015, Math.min(.5, old * factor)), cx = board.clientWidth / 2, cy = board.clientHeight / 2; view.x = cx - (cx - view.x) * next / old; view.y = cy - (cy - view.y) * next / old; view.scale = next; draw(); }
   $('zoom-in').onclick = () => zoom(1.25); $('zoom-out').onclick = () => zoom(.8);
   $('reset-map').onclick = () => { draft.placements = M.defaults(state); dirty = true; update(); fit(); };
-  document.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { document.querySelectorAll('[data-tab]').forEach(t => { t.classList.toggle('active', t === b); t.setAttribute('aria-selected', t === b ? 'true' : 'false'); }); ['screens', 'mouse', 'peer', 'connection'].forEach(name => $(name + '-tab').hidden = b.dataset.tab !== name); $('savebar').hidden = b.dataset.tab !== 'screens'; if (b.dataset.tab === 'screens') fit(); });
+  document.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { document.querySelectorAll('[data-tab]').forEach(t => { t.classList.toggle('active', t === b); t.setAttribute('aria-selected', t === b ? 'true' : 'false'); }); ['screens', 'peer', 'connection'].forEach(name => $(name + '-tab').hidden = b.dataset.tab !== name); $('savebar').hidden = b.dataset.tab !== 'screens'; if (b.dataset.tab === 'screens') fit(); });
+  // Botón "Cambiar de pantalla": recorre todas las pantallas (esta PC y la otra).
+  $('next-screen').onclick = () => { const all = rects(); if (!all.length) return; const i = all.findIndex(s => M.key(s) === selected); selected = M.key(all[(i + 1) % all.length]); update(); };
+  // Configuración (engranaje): apariencia de la plataforma y ratón.
+  const drawer = $('settings-drawer'), scrim = $('settings-scrim');
+  function openSettings(open) { drawer.hidden = scrim.hidden = !open; if (open) $('settings-close').focus(); else $('settings-open').focus(); }
+  $('settings-open').onclick = () => openSettings(true); $('settings-close').onclick = () => openSettings(false); scrim.onclick = () => openSettings(false);
+  addEventListener('keydown', e => { if (e.key === 'Escape' && !drawer.hidden) openSettings(false); });
+  const colorMap = { bg: ['--bg'], panel: ['--panel', '--raised'], line: ['--line', '--grid'], accent: ['--accent'], text: ['--text'] };
+  const saved = () => { try { return JSON.parse(localStorage.getItem('tecColors') || '{}'); } catch { return {}; } };
+  function applyColors() {
+    const c = saved();
+    for (const [key, vars] of Object.entries(colorMap)) vars.forEach(v => c[key] ? document.documentElement.style.setProperty(v, c[key]) : document.documentElement.style.removeProperty(v));
+    document.querySelectorAll('[data-var]').forEach(i => { const v = getComputedStyle(document.documentElement).getPropertyValue(colorMap[i.dataset.var][0]).trim(); i.value = c[i.dataset.var] || (/^#[0-9a-f]{6}$/i.test(v) ? v : '#000000'); });
+  }
+  document.querySelectorAll('[data-var]').forEach(i => i.oninput = () => { const c = saved(); c[i.dataset.var] = i.value; localStorage.setItem('tecColors', JSON.stringify(c)); applyColors(); });
+  $('colors-reset').onclick = () => { localStorage.removeItem('tecColors'); applyColors(); };
+  applyColors();
   new ResizeObserver(() => fit()).observe($('spatial-map'));
   window.__tecTest = { receive, draft: () => structuredClone(draft), select: key => { selected = key; update(); } };
   if (preview) {

@@ -75,8 +75,8 @@ public sealed class TrayAppContext : ApplicationContext
         if (on == _bridge.Powered) return;
         _bridge.Powered = on;
         _powerItem.Checked = on;
-        if (on) StartNetworking();
-        else { _netCts?.Cancel(); _netCts = null; }
+        if (on) { CursorStyler.Apply(_config.CursorStyle, _config.CursorSizePercent); StartNetworking(); }
+        else { _netCts?.Cancel(); _netCts = null; CursorStyler.Restore(); }
         OnControlChanged(on ? "TecLink encendido" : "TecLink apagado");
         _panel?.RefreshState();
     }
