@@ -1111,6 +1111,7 @@ public sealed partial class EdgeBridge : IDisposable
         {
             SwitchToLocal(force: true);
             _desktop = CaptureDesktop();
+            Logger.Info("Cambió el número o tamaño de pantallas: " + string.Join("; ", LocalDisplays().Select(d => $"{d.Id} {d.Width}x{d.Height} en {d.Left},{d.Top}")));
             var owner = _sessionMode && _config.Role == PeerRole.Server && _remoteKnown;
             if (owner) AdoptOwnerMap(); else RefreshSpatialRoutes();
             if (_connection is { } connection)

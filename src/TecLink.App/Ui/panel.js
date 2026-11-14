@@ -306,6 +306,7 @@
   $('toggle-control').onclick = () => send({ type: 'toggleControl' });
   $('power').onclick = () => send({ type: 'setPower', on: $('power').getAttribute('aria-pressed') !== 'true' });
   $('fit-map').onclick = fit;
+  $('detect-displays').onclick = () => { send({ type: 'detectDisplays' }); toast('Buscando monitores…'); };
   function zoom(factor) { const board = $('spatial-map'), old = view.scale, next = Math.max(.015, Math.min(.5, old * factor)), cx = board.clientWidth / 2, cy = board.clientHeight / 2; view.x = cx - (cx - view.x) * next / old; view.y = cy - (cy - view.y) * next / old; view.scale = next; draw(); }
   $('zoom-in').onclick = () => zoom(1.25); $('zoom-out').onclick = () => zoom(.8);
   $('reset-map').onclick = () => { const hidden = draft.placements.filter(p => p.hidden); draft.placements = M.defaults(state).map(p => hidden.some(h => M.key(h) === M.key(p)) ? { ...p, hidden: true } : p); dirty = true; update(); fit(); autoSave(); };

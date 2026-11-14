@@ -153,6 +153,17 @@ public sealed class ControlPanelForm : Form
                     _bridge.ViewerButton(root.GetProperty("button").GetInt32() switch { 2 => TecLink.Core.Protocol.MouseButtonKind.Right, 1 => TecLink.Core.Protocol.MouseButtonKind.Middle, _ => TecLink.Core.Protocol.MouseButtonKind.Left }, root.GetProperty("down").GetBoolean());
                     break;
                 case "tileWheel": _bridge.ViewerWheel(root.GetProperty("delta").GetInt32()); break;
+                case "detectDisplays":
+                    // Windows' own "Extend these displays" (the same as Win+P): asks the graphics driver to look for monitors again.
+                    _ = Task.Run(async () =>
+                    {
+                        try { using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("DisplaySwitch.exe", "/extend") { UseShellExecute = false, CreateNoWindow = true }); p?.WaitForExit(8000); }
+                        catch (System.ComponentModel.Win32Exception) { }
+                        await Task.Delay(2500);
+                        var count = Screen.AllScreens.Length;
+                        if (!IsDisposed && IsHandleCreated) BeginInvoke(() => { Post(new { type = "toast", message = count > 1 ? $"Windows detectó {count} pantallas." : "Windows sigue viendo una sola pantalla. Revisa el cable HDMI y que el monitor esté en esa entrada; también prueba Windows + Ctrl + Shift + B." }); RefreshState(); });
+                    });
+                    break;
                 case "removeAsk": _bridge.RequestRemoveScreen(root.GetProperty("id").GetString() ?? ""); break;
                 case "removeAnswer": _bridge.AnswerRemoval(root.GetProperty("id").GetString() ?? "", root.GetProperty("accept").GetBoolean()); break;
                 case "repair":
