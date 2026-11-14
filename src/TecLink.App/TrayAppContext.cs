@@ -140,7 +140,13 @@ public sealed class TrayAppContext : ApplicationContext
     }
 
     public void BindShowSignal(EventWaitHandle signal) => _showRequest = ThreadPool.RegisterWaitForSingleObject(signal,
-        (_, _) => { if (!_clipboard.IsDisposed) _clipboard.BeginInvoke(ShowPanel); }, null, Timeout.Infinite, false);
+        (_, _) =>
+        {
+            // A second launch (double click twice, installer + shortcut) asks this one to show itself. If this instance is still
+            // starting up or already closing, ignore the request instead of crashing.
+            try { if (!_clipboard.IsDisposed && _clipboard.IsHandleCreated) _clipboard.BeginInvoke(ShowPanel); }
+            catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException) { }
+        }, null, Timeout.Infinite, false);
 
     private void ShowPanel()
     {
