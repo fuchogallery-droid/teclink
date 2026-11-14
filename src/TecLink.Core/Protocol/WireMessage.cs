@@ -92,6 +92,10 @@ public sealed class WireMessage
 
     public static WireMessage ClipboardTextMsg(string text) => new() { Type = MessageType.ClipboardText, Text = text };
 
+    public static WireMessage Join(string code) => new() { Type = MessageType.Join, Text = code };
+    public static WireMessage JoinResult(bool accepted, string? reason = null) => new() { Type = MessageType.JoinResult, Accepted = accepted, Text = reason };
+    public static WireMessage Management(bool on) => new() { Type = MessageType.Management, Accepted = on };
+
     public static WireMessage Heartbeat() => new() { Type = MessageType.Heartbeat };
 
     public static WireMessage SwitchToRemote() => new() { Type = MessageType.SwitchToRemote };
@@ -189,6 +193,15 @@ public sealed class WireMessage
             case MessageType.SpatialMapAck:
                 w.Write(RequestId ?? ""); w.Write(Accepted); w.Write(Text ?? "");
                 break;
+            case MessageType.Join:
+                w.Write(Text ?? "");
+                break;
+            case MessageType.JoinResult:
+                w.Write(Accepted); w.Write(Text ?? "");
+                break;
+            case MessageType.Management:
+                w.Write(Accepted);
+                break;
         }
 
         w.Flush();
@@ -227,6 +240,9 @@ public sealed class WireMessage
             MessageType.SpatialMap => ReadMap(r),
             MessageType.SpatialMapAck => new WireMessage { Type = type, RequestId = r.ReadString(), Accepted = r.ReadBoolean(), Text = r.ReadString() },
             MessageType.ScreenStop or MessageType.ScreenAck => new WireMessage { Type = type },
+            MessageType.Join => new WireMessage { Type = type, Text = r.ReadString() },
+            MessageType.JoinResult => new WireMessage { Type = type, Accepted = r.ReadBoolean(), Text = r.ReadString() },
+            MessageType.Management => new WireMessage { Type = type, Accepted = r.ReadBoolean() },
             MessageType.PointerSettings => new WireMessage { Type = type, SpeedLevel = r.ReadInt32(), CursorStyle = r.ReadString(), CursorSizePercent = r.ReadInt32() },
             MessageType.ScreenStart => new WireMessage { Type = type, Index = r.ReadInt32(), Width = r.ReadInt32(), Height = r.ReadInt32() },
             MessageType.ScreenFrame => new WireMessage { Type = type, Index = r.ReadInt32(), Left = r.ReadInt32(), Top = r.ReadInt32(), Width = r.ReadInt32(), Height = r.ReadInt32(), Data = ReadBytes(r) },

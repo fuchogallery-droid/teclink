@@ -107,20 +107,105 @@ public sealed class EdgeBridge : IDisposable
         _keyboardHook.Install();
     }
 
+    // ---- Sessions: invitation code, 10-screen limit and the "management" switch ----
+    public const int MaxScreens = 10;
+    private volatile bool _joined;        // host: the guest sent the right code
+    private volatile bool _sessionMode;   // this link was made with a code (not a legacy direct IP)
+    private volatile bool _management;    // host's switch: may the screens be viewed/controlled?
+    private volatile bool _joinAnswered;
+    private string _joinNotice = "";
+    private Action? _dropCurrent;
+
+    /// <summary>Without a code-based session (legacy direct link) nothing is restricted.</summary>
+    public bool ManagementAllowed => !_sessionMode || _management;
+    public string SessionCode => _config.SessionCode;
+
+    public void StartHosting()
+    {
+        _config.Role = PeerRole.Server; _config.JoinCode = ""; _joinNotice = "";
+        _config.Save();
+    }
+
+    public void JoinSession(string? code)
+    {
+        var clean = SessionDiscovery.Normalize(code) ?? throw new ArgumentException("El código tiene 6 letras o números. Revísalo.");
+        _config.Role = PeerRole.Client; _config.JoinCode = clean; _joinNotice = "";
+        _config.Save();
+    }
+
+    /// <summary>Host only: lets both PCs see and control each other's screens, or closes that again.</summary>
+    public void SetManagement(bool on)
+    {
+        if (_config.Role != PeerRole.Server || on == _management) return;
+        _management = on;
+        if (_connection is { } conn) _ = conn.SendAsync(WireMessage.Management(on));
+        if (!on) RevokeManagement();
+        StatusChanged?.Invoke(on ? "Gestión de pantallas activada" : "Gestión de pantallas apagada");
+    }
+
+    private void RevokeManagement()
+    {
+        _clipboard.BeginInvoke(() =>
+        {
+            if (_viewInput) { _viewInput = false; _keyboardHook.Swallow = false; ReleaseAllRemoteHeldInput(); }
+            _peerControlling = false;
+            SwitchToLocal(force: true);
+            ReleaseAllInjectedInput();
+            _screenHost.Stop();
+            ViewerCloseRequested?.Invoke();
+        });
+    }
+
+    private void HandleJoin(WireMessage msg)
+    {
+        if (_connection is not { } conn) return;
+        if (SessionDiscovery.Normalize(msg.Text) != SessionDiscovery.Normalize(_config.SessionCode))
+        {
+            _ = conn.SendAsync(WireMessage.JoinResult(false, "Código incorrecto"));
+            _ = Task.Delay(400).ContinueWith(_ => _dropCurrent?.Invoke());
+            return;
+        }
+        _joined = true; _sessionMode = true;
+        _ = conn.SendAsync(WireMessage.JoinResult(true));
+        _ = conn.SendAsync(WireMessage.Management(_management));
+        _ = SendDesktopAsync(conn);
+        StatusChanged?.Invoke("Invitado conectado — enviando identificación...");
+    }
+
+    private void Reject(string reason)
+    {
+        if (_connection is { } conn) _ = conn.SendAsync(WireMessage.JoinResult(false, reason));
+        _ = Task.Delay(400).ContinueWith(_ => _dropCurrent?.Invoke());
+        StatusChanged?.Invoke(reason);
+    }
+
     public async Task RunNetworkingAsync(CancellationToken ct)
     {
+        if (_config.Role == PeerRole.Server)
+            _ = SessionDiscovery.RunResponderAsync(() => SessionDiscovery.Normalize(_config.SessionCode) ?? "", _config.Port, ct);
         while (!ct.IsCancellationRequested)
         {
             PeerConnection connection;
+            var guestCode = _config.Role == PeerRole.Client ? SessionDiscovery.Normalize(_config.JoinCode) : null;
             try
             {
-                StatusChanged?.Invoke(_config.Role == PeerRole.Server
-                    ? $"Esperando conexión en el puerto {_config.Port}..."
-                    : $"Conectando a {_config.PeerHost}:{_config.Port}...");
+                if (_config.Role == PeerRole.Server) StatusChanged?.Invoke($"Sesión abierta — código {SessionDiscovery.Pretty(_config.SessionCode)}");
+                else StatusChanged?.Invoke(guestCode is not null ? "Buscando la sesión en tu red..." : $"Conectando a {_config.PeerHost}:{_config.Port}...");
 
-                connection = _config.Role == PeerRole.Server
-                    ? await PeerServer.AcceptOneAsync(_config.Port, ct)
-                    : await PeerServer.ConnectAsync(_config.PeerHost, _config.Port, ct);
+                if (_config.Role == PeerRole.Server) connection = await PeerServer.AcceptOneAsync(_config.Port, ct);
+                else if (guestCode is not null)
+                {
+                    var host = await SessionDiscovery.FindAsync(guestCode, TimeSpan.FromSeconds(5), ct);
+                    if (host is null)
+                    {
+                        _joinNotice = "No encontré esa sesión. Revisa el código y que la otra PC esté abierta en la misma red.";
+                        StatusChanged?.Invoke(_joinNotice);
+                        await Task.Delay(2500, ct);
+                        continue;
+                    }
+                    connection = await PeerServer.ConnectAsync(host.Address.ToString(), host.Port, ct);
+                }
+                else connection = await PeerServer.ConnectAsync(_config.PeerHost, _config.Port, ct);
             }
             catch (OperationCanceledException)
             {
@@ -135,16 +220,38 @@ public sealed class EdgeBridge : IDisposable
 
             _connection = connection;
             _remoteKnown = false;
+            _joined = false; _joinAnswered = false;
+            if (_config.Role == PeerRole.Client) _management = false; // a host's switch survives guests coming and going
+            _sessionMode = _config.Role == PeerRole.Server || guestCode is not null;
             var disconnectedTcs = new TaskCompletionSource();
+            _dropCurrent = () => disconnectedTcs.TrySetResult();
 
             connection.MessageReceived += OnMessageReceived;
             connection.Disconnected += () => disconnectedTcs.TrySetResult();
             connection.StartReceiving();
 
-            StatusChanged?.Invoke($"Conectado con {_config.PeerHost} — enviando identificación...");
-            await SendDesktopAsync(connection);
+            if (_config.Role == PeerRole.Client)
+            {
+                StatusChanged?.Invoke("Conectado — enviando identificación...");
+                if (guestCode is not null)
+                {
+                    await connection.SendAsync(WireMessage.Join(guestCode));
+                    // An older host never answers: treat the link as a legacy direct one.
+                    _ = Task.Delay(2500).ContinueWith(_ => { if (_connection == connection && !_joinAnswered) _sessionMode = false; });
+                }
+                await SendDesktopAsync(connection);
+            }
+            else
+            {
+                StatusChanged?.Invoke("Alguien se está conectando...");
+                // The guest must send the code right away.
+                _ = Task.Delay(5000).ContinueWith(_ => { if (_connection == connection && !_joined) _dropCurrent?.Invoke(); });
+            }
 
             await Task.WhenAny(disconnectedTcs.Task, Task.Delay(Timeout.Infinite, ct));
+            _dropCurrent = null;
+            _sessionMode = false; _joined = false;
+            if (_config.Role == PeerRole.Client) _management = false;
 
             StatusChanged?.Invoke(ct.IsCancellationRequested ? "TecLink apagado" : "Conexión perdida. Reintentando...");
             _connection = null;
@@ -163,13 +270,16 @@ public sealed class EdgeBridge : IDisposable
             await connection.DisposeAsync();
 
             if (ct.IsCancellationRequested) return;
-            await Task.Delay(2000, ct);
+            await Task.Delay(string.IsNullOrEmpty(_joinNotice) ? 2000 : 5000, ct); // refused: don't hammer the host
         }
     }
 
     private void OnMessageReceived(WireMessage msg)
     {
         if (_clipboard.IsDisposed) return;
+        // A host talks to nobody who has not shown the invitation code.
+        if (msg.Type == MessageType.Join) { if (_config.Role == PeerRole.Server) HandleJoin(msg); return; }
+        if (_config.Role == PeerRole.Server && !_joined) return;
         // Bulk data stays on the network thread: writing to disk here is what
         // throttles the sender, and frames are decoded off the UI thread.
         if (Files.Handle(msg)) return;
@@ -192,6 +302,12 @@ public sealed class EdgeBridge : IDisposable
                     : new[] { new DisplayInfo("desktop", 0, 0, _remoteWidth, _remoteHeight) };
                 _peerMapSupported = msg.SupportsSpatialMap;
                 _peerExtras = msg.SupportsExtras;
+                if (_config.Role == PeerRole.Server && LocalDisplays().Length + _remoteDisplays.Length > MaxScreens)
+                {
+                    _remoteKnown = false;
+                    Reject($"Límite de {MaxScreens} pantallas por sesión: esta sesión ya tiene {LocalDisplays().Length} y la PC invitada trae {_remoteDisplays.Length}.");
+                    break;
+                }
                 if (_peerExtras && _config.Role == PeerRole.Server)
                     _ = _connection!.SendAsync(WireMessage.Pointer(_config.PointerSpeedLevel, _config.CursorStyle, _config.CursorSizePercent));
                 RefreshSpatialRoutes();
@@ -200,18 +316,38 @@ public sealed class EdgeBridge : IDisposable
                     _ = _connection!.SendAsync(WireMessage.Map(Guid.NewGuid().ToString("N"), _config.ScreenPositions.ToArray()));
                 StatusChanged?.Invoke($"Vinculado con {msg.MachineName} ({_remoteWidth}x{_remoteHeight})");
                 break;
+            case MessageType.JoinResult:
+                _joinAnswered = true;
+                if (msg.Accepted) { _joinNotice = ""; _sessionMode = true; }
+                else
+                {
+                    _joinNotice = string.IsNullOrWhiteSpace(msg.Text) ? "La sesión no te aceptó." : msg.Text!;
+                    StatusChanged?.Invoke(_joinNotice);
+                    _dropCurrent?.Invoke();
+                }
+                break;
+            case MessageType.Management:
+                if (_config.Role != PeerRole.Client || !_sessionMode) break;
+                _management = msg.Accepted;
+                if (!_management) RevokeManagement();
+                StatusChanged?.Invoke(_management ? "El anfitrión activó la gestión de pantallas" : "Gestión de pantallas apagada");
+                break;
             case MessageType.MouseMove:
+                if (!ManagementAllowed) break;
                 var localPoint = _desktop.FromWire(new Point(msg.X, msg.Y));
                 InputInjector.MoveTo(localPoint.X, localPoint.Y);
                 break;
             case MessageType.MouseButton:
+                if (!ManagementAllowed) break;
                 if (msg.IsDown) _heldButtons.Add(msg.Button); else _heldButtons.Remove(msg.Button);
                 InputInjector.Button(msg.Button, msg.IsDown);
                 break;
             case MessageType.MouseWheel:
+                if (!ManagementAllowed) break;
                 InputInjector.Wheel(msg.WheelDelta);
                 break;
             case MessageType.KeyEvent:
+                if (!ManagementAllowed) break;
                 if (msg.IsDown) _heldKeys[msg.VkCode] = (msg.ScanCode, msg.IsExtendedKey); else _heldKeys.Remove(msg.VkCode);
                 if (!InputInjector.Key(msg.VkCode, msg.IsDown, msg.IsExtendedKey, msg.ScanCode))
                     StatusChanged?.Invoke("Windows rechazó entrada de teclado; revisa error.log");
@@ -220,6 +356,7 @@ public sealed class EdgeBridge : IDisposable
                 _clipboard.ApplyRemoteText(msg.Text ?? "");
                 break;
             case MessageType.SwitchToRemote:
+                if (!ManagementAllowed) break;
                 _lastLocalPoint = null;
                 // The peer just started controlling us. If we were ALSO currently
                 // controlling them (both pressed the hotkey near-simultaneously), we
@@ -263,7 +400,7 @@ public sealed class EdgeBridge : IDisposable
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Logger.LogError(ex); }
                 break;
             case MessageType.ScreenStart:
-                if (_connection is { } viewer)
+                if (ManagementAllowed && _connection is { } viewer)
                 {
                     _screenHost.Start(viewer, msg.Index, msg.Width, msg.Height);
                     ControlChanged?.Invoke("La otra PC está viendo esta pantalla");
@@ -292,7 +429,7 @@ public sealed class EdgeBridge : IDisposable
                 return;
             }
             if (_config.UseSpatialMap) return; // An unavailable map must not reactivate legacy exits.
-            if (_connection is null || !_remoteKnown || _peerControlling || !_config.AutomaticSwitching) return;
+            if (_connection is null || !_remoteKnown || _peerControlling || !_config.AutomaticSwitching || !ManagementAllowed) return;
             var desktop = _desktop;
             var point = new Point(e.X, e.Y);
             var source = LocalDisplays().FirstOrDefault(s => s.Bounds.Contains(point));
@@ -415,6 +552,11 @@ public sealed class EdgeBridge : IDisposable
             StatusChanged?.Invoke("Atajo presionado, pero no hay conexión con la otra PC todavía");
             return;
         }
+        if (_mode != BridgeMode.Remote && !ManagementAllowed)
+        {
+            StatusChanged?.Invoke("La gestión de pantallas está apagada: el anfitrión debe activarla.");
+            return;
+        }
 
         if (_mode == BridgeMode.Remote)
         {
@@ -433,6 +575,11 @@ public sealed class EdgeBridge : IDisposable
     /// screen center.</summary>
     private void EngageRemote(int anchorX, int anchorY, int entryX, int entryY)
     {
+        if (!ManagementAllowed)
+        {
+            StatusChanged?.Invoke("La gestión de pantallas está apagada: el anfitrión debe activarla.");
+            return;
+        }
         _peerControlling = false;
         _speed.Reset();
         _mode = BridgeMode.Remote;
@@ -536,6 +683,9 @@ public sealed class EdgeBridge : IDisposable
             automatic = _config.AutomaticSwitching, theme = _config.Theme, powered = Powered,
             placements = _config.ScreenPositions, spatialEnabled = _config.UseSpatialMap, peerMapSupported = _peerMapSupported,
             host = _config.PeerHost, port = _config.Port, role = _config.Role.ToString(),
+            sessionCode = SessionDiscovery.Pretty(SessionDiscovery.Normalize(_config.SessionCode) ?? ""),
+            joinCode = SessionDiscovery.Pretty(SessionDiscovery.Normalize(_config.JoinCode) ?? ""),
+            sessionMode = _sessionMode, management = _management, joinNotice = _joinNotice, maxScreens = MaxScreens,
             pointerSpeed = CurrentSpeedLevel(), cursorStyle = CursorStyler.Normalize(_config.CursorStyle),
             cursorSize = CursorStyler.ClampSize(_config.CursorSizePercent), extras = CanUseExtras,
             transfer = Files.LastStatus, receiveFolder = Files.ReceiveFolder,
@@ -648,7 +798,7 @@ public sealed class EdgeBridge : IDisposable
 
     public void StartViewing(int displayIndex, int maxWidth, int maxHeight)
     {
-        if (CanUseExtras) _ = _connection!.SendAsync(WireMessage.ScreenStart(displayIndex, maxWidth, maxHeight));
+        if (CanUseExtras && ManagementAllowed) _ = _connection!.SendAsync(WireMessage.ScreenStart(displayIndex, maxWidth, maxHeight));
     }
 
     public void StopViewing()
@@ -666,7 +816,7 @@ public sealed class EdgeBridge : IDisposable
         if (active == _viewInput) return;
         if (active)
         {
-            if (!CanUseExtras) return;
+            if (!CanUseExtras || !ManagementAllowed) return;
             if (_mode == BridgeMode.Remote) SwitchToLocal();
             _viewInput = true;
             _peerControlling = false;
@@ -721,7 +871,7 @@ public sealed class EdgeBridge : IDisposable
         var source = local.FirstOrDefault(d => d.Bounds.Contains(previous)) ?? local.FirstOrDefault(d => d.Bounds.Contains(candidate));
         if (source is null) { _lastLocalPoint = candidate; return; }
         var transition = SpatialNavigation.Find(source, previous, candidate, _spatialLocal, local, _remoteDisplays);
-        if (transition is not null && (!transition.Route.TargetRemote || _config.AutomaticSwitching))
+        if (transition is not null && (!transition.Route.TargetRemote || (_config.AutomaticSwitching && ManagementAllowed)))
         {
             e.Suppress = true;
             if (transition.Route.TargetRemote)

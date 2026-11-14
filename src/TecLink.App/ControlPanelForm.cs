@@ -29,10 +29,11 @@ public sealed class ControlPanelForm : Form
     }
 
     private readonly Action<bool> _setPower;
+    private readonly Action<string, string?> _session;
 
-    public ControlPanelForm(EdgeBridge bridge, Func<string> status, Action openViewer, Action<bool> setPower)
+    public ControlPanelForm(EdgeBridge bridge, Func<string> status, Action openViewer, Action<bool> setPower, Action<string, string?> session)
     {
-        _bridge = bridge; _status = status; _openViewer = openViewer; _setPower = setPower;
+        _bridge = bridge; _status = status; _openViewer = openViewer; _setPower = setPower; _session = session;
         Text = "TecLink — pantallas y salidas";
         Icon = TrayAppContext.AppIcon;
         ClientSize = new Size(1120, 760);
@@ -116,6 +117,11 @@ public sealed class ControlPanelForm : Form
                     System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(_bridge.Files.ReceiveFolder) { UseShellExecute = true });
                     break;
                 case "setPower": _setPower(root.GetProperty("on").GetBoolean()); RefreshState(); break;
+                case "session":
+                    _session(root.GetProperty("action").GetString() ?? "", root.TryGetProperty("code", out var code) ? code.GetString() : null);
+                    RefreshState();
+                    break;
+                case "setManagement": _bridge.SetManagement(root.GetProperty("on").GetBoolean()); RefreshState(); break;
             }
         }
         catch (Exception ex) when (ex is ArgumentException or JsonException or IOException or UnauthorizedAccessException)

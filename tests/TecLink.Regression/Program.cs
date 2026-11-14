@@ -263,4 +263,24 @@ try
 }
 finally { try { Directory.Delete(work, true); } catch (IOException) { } }
 
+
+// Session codes, protocol and LAN discovery.
+{
+    var code = TecLink.Core.Networking.SessionDiscovery.NewCode();
+    Check(code.Length == 6 && TecLink.Core.Networking.SessionDiscovery.Normalize(code) == code, "A new session code is 6 valid characters");
+    Check(TecLink.Core.Networking.SessionDiscovery.Normalize("k7m-4qx") == "K7M4QX", "Codes accept lowercase and a dash");
+    Check(TecLink.Core.Networking.SessionDiscovery.Normalize("K7M4Q") is null && TecLink.Core.Networking.SessionDiscovery.Normalize("K7M4Q0") is null, "Short or ambiguous codes are refused");
+    Check(WireMessage.Decode(WireMessage.Join("K7M4QX").Encode()).Text == "K7M4QX", "Join carries the code");
+    var refused = WireMessage.Decode(WireMessage.JoinResult(false, "Codigo incorrecto").Encode());
+    Check(!refused.Accepted && refused.Text == "Codigo incorrecto", "JoinResult carries the reason");
+    Check(WireMessage.Decode(WireMessage.Management(true).Encode()).Accepted, "Management switch travels");
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+    var responder = TecLink.Core.Networking.SessionDiscovery.RunResponderAsync(() => "K7M4QX", 51777, cts.Token);
+    var found = await TecLink.Core.Networking.SessionDiscovery.FindAsync("K7M4QX", TimeSpan.FromSeconds(4), cts.Token);
+    Check(found is { Port: 51777 }, "Guest finds the host on the LAN with only the code");
+    var missing = await TecLink.Core.Networking.SessionDiscovery.FindAsync("ZZZZZZ", TimeSpan.FromSeconds(2), cts.Token);
+    Check(missing is null, "A wrong code finds nothing");
+    cts.Cancel();
+    try { await responder; } catch (OperationCanceledException) { }
+}
 Console.WriteLine($"PASS: {checks} geometry, input, map, TCP, pointer and file-transfer regression checks");

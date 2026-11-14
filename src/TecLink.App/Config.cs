@@ -13,6 +13,10 @@ public sealed class AppConfig
     public string MachineName { get; set; } = Environment.MachineName;
     public PeerRole Role { get; set; } = PeerRole.Server;
     public string PeerHost { get; set; } = "";
+    /// <summary>Invitation code of the session this PC hosts (always set; shown in the panel).</summary>
+    public string SessionCode { get; set; } = "";
+    /// <summary>Code of the session this PC joined as a guest; empty = hosting (or a legacy direct IP link).</summary>
+    public string JoinCode { get; set; } = "";
     public int Port { get; set; } = PeerServer.DefaultPort;
 
     /// <summary>Which edge of THIS machine's screen leads to the peer.</summary>

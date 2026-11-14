@@ -96,7 +96,8 @@
     $('save-heading').textContent = dirty ? 'Cambios sin guardar' : 'Mapa actual'; $('save-message').textContent = saving ? 'Esperando confirmación…' : 'Los cambios se aplican al guardar.';
     ['theme', 'automatic', 'reset-map', 'position-x', 'position-y'].forEach(id => $(id).disabled = saving);
     document.querySelectorAll('[data-dx]').forEach(b => b.disabled = saving);
-    for (const [id, value] of Object.entries({ 'connection-title': state.connected ? 'Tus equipos están conectados' : 'Esperando conexión', 'detail-name': state.machineName, 'detail-remote': state.remoteName || '—', 'detail-role': state.role === 'Server' ? 'Servidor' : 'Cliente', 'detail-host': state.host, 'detail-port': state.port, 'detail-status': state.status })) $(id).textContent = value;
+    for (const [id, value] of Object.entries({ 'connection-title': state.connected ? 'Tus equipos están conectados' : 'Esperando conexión', 'detail-name': state.machineName, 'detail-remote': state.remoteName || '—', 'detail-role': state.role === 'Server' ? 'Anfitrión de la sesión' : state.joinCode ? 'Invitado' : 'Enlace directo por IP', 'detail-host': state.host, 'detail-port': state.port, 'detail-status': state.status })) $(id).textContent = value;
+    updateSession();
     const extras = !!state.extras, level = state.pointerSpeed || 10, size = state.cursorSize || 100, style = state.cursorStyle || 'system';
     if (!pointerBusy) { $('speed').value = level; $('cursor-size').value = size; chosenStyle = style; }
     $('speed-label').textContent = `${$('speed').value} de 20`; $('size-label').textContent = `${$('cursor-size').value} %`;
@@ -111,6 +112,39 @@
     if (state.receiveFolder) $('receive-folder').textContent = state.receiveFolder;
     draw();
   }
+  // ---- Conectar: sesión con código, interruptor de gestión y cuadrícula ----
+  function updateSession() {
+    const host = state.role === 'Server', legacy = !host && !state.joinCode, on = state.powered !== false, max = state.maxScreens || 10;
+    $('session-code').textContent = state.sessionCode || '——';
+    $('host-card').classList.toggle('inactive', !host);
+    $('host-status').textContent = !host ? 'Estás unido a otra sesión. Sal de ella para invitar a alguien.' : state.connected ? `${state.remoteName || 'Otra PC'} está conectada a tu sesión.` : 'Esperando a que alguien se una con este código.';
+    $('join-card').classList.toggle('inactive', !host && legacy);
+    if (document.activeElement !== $('join-code') && !host) $('join-code').value = state.joinCode || '';
+    $('leave-btn').hidden = host; $('join-btn').hidden = !host;
+    $('join-btn').textContent = 'Unirme'; $('join-code').disabled = !host;
+    $('join-notice').textContent = state.joinNotice || (!host && !state.connected && state.joinCode ? 'Buscando la sesión en tu red…' : !host && state.connected ? `Conectado a la sesión de ${state.remoteName || 'la otra PC'}.` : '');
+    const m = !!state.management, sw = $('management');
+    sw.hidden = legacy; $('management-note').hidden = legacy;
+    sw.setAttribute('aria-checked', m); sw.disabled = !host || !on;
+    $('management-label').textContent = host ? `Gestión de pantallas: ${m ? 'activada' : 'apagada'}` : `Gestión: ${m ? 'activada por el anfitrión' : 'la decide el anfitrión'}`;
+    $('management-note').textContent = m ? 'Ambas PCs pueden ver y controlar las pantallas de la sesión.' : 'Las pantallas se suman al mapa, pero nadie las ve ni las controla hasta que el anfitrión active este interruptor.';
+    const pcs = [{ name: state.machineName + ' (esta PC)', screens: state.local || [] }];
+    if (state.connected) pcs.push({ name: state.remoteName || 'Otra PC', screens: state.remote || [] });
+    const total = pcs.reduce((n, p) => n + p.screens.length, 0), cols = Math.max(1, ...pcs.map(p => p.screens.length));
+    $('screen-count').textContent = `${total} de ${max}`;
+    const grid = $('screen-grid'); grid.replaceChildren(); grid.style.setProperty('--cols', cols);
+    for (const pc of pcs) {
+      const label = document.createElement('div'); label.className = 'grid-pc'; label.textContent = pc.name; label.setAttribute('role', 'listitem'); grid.append(label);
+      for (let i = 0; i < cols; i++) { const s = pc.screens[i], cell = document.createElement('div'); cell.className = 'grid-cell' + (s ? '' : ' empty'); if (s) { const b = document.createElement('strong'), d = document.createElement('small'); b.textContent = s.label || `Pantalla ${i + 1}`; d.textContent = `${s.width} × ${s.height}`; cell.append(b, d); } grid.append(cell); }
+    }
+    $('grid-note').textContent = total >= max ? `Llegaste al límite de ${max} pantallas por sesión.` : `Caben ${max - total} pantallas más en esta sesión.`;
+  }
+  $('management').onclick = () => send({ type: 'setManagement', on: $('management').getAttribute('aria-checked') !== 'true' });
+  $('copy-code').onclick = async () => { const code = (state?.sessionCode || '').replace('-', ''); if (!code) return; try { await navigator.clipboard.writeText(state.sessionCode); toast('Código copiado: ' + state.sessionCode); } catch { toast('Tu código es ' + state.sessionCode); } };
+  $('join-code').oninput = e => { const raw = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6); e.target.value = raw.length > 3 ? raw.slice(0, 3) + '-' + raw.slice(3) : raw; };
+  $('join-code').onkeydown = e => { if (e.key === 'Enter') $('join-btn').click(); };
+  $('join-btn').onclick = () => { const code = $('join-code').value.replace(/[^A-Za-z0-9]/g, ''); if (code.length !== 6) { toast('El código tiene 6 letras o números.'); return; } send({ type: 'session', action: 'join', code }); };
+  $('leave-btn').onclick = () => send({ type: 'session', action: 'host' });
   let pointerBusy = false, pointerTimer, chosenStyle = 'system';
   function sendPointer() {
     pointerBusy = true; clearTimeout(pointerTimer);
@@ -168,7 +202,7 @@
   window.__tecTest = { receive, draft: () => structuredClone(draft), select: key => { selected = key; update(); } };
   if (preview) {
     window.__tecMessages = [];
-    receive({ type: 'state', state: { machineName: 'JENAV', remoteName: 'RAFAEL', connected: true, mode: 'local', role: 'Client', host: '192.168.12.183', port: 51777, status: 'Conexión por red local', extras: true, pointerSpeed: 10, cursorStyle: 'green', cursorSize: 150, transfer: '', receiveFolder: 'C:\\Users\\jenav\\Downloads\\TecLink', automatic: true, theme: 'dark', peerMapSupported: true, spatialEnabled: true,
+    receive({ type: 'state', state: { machineName: 'JENAV', remoteName: 'RAFAEL', connected: true, mode: 'local', role: 'Server', sessionCode: 'K7M-4QX', joinCode: '', management: false, maxScreens: 10, host: '192.168.12.183', port: 51777, status: 'Conexión por red local', extras: true, pointerSpeed: 10, cursorStyle: 'green', cursorSize: 150, transfer: '', receiveFolder: 'C:\\Users\\jenav\\Downloads\\TecLink', automatic: true, theme: 'dark', peerMapSupported: true, spatialEnabled: true,
       local: [{ id: 'screen1', label: 'Pantalla 1', primary: true, left: 0, top: 0, width: 2240, height: 1400 }, { id: 'screen2', label: 'Pantalla 2 · HDMI', left: -1600, top: -2160, width: 3840, height: 2160 }], remote: [{ id: 'screen1', label: 'Pantalla 1', left: 0, top: 0, width: 1920, height: 1080 }], placements: [{ id: 'screen1', remote: false, x: 0, y: 0 }, { id: 'screen2', remote: false, x: -1600, y: -2160 }, { id: 'screen1', remote: true, x: -1920, y: 0 }] } });
   } else { window.chrome?.webview?.addEventListener('message', e => receive(e.data)); send({ type: 'ready' }); }
 })();

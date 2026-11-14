@@ -60,12 +60,29 @@ public sealed class TrayAppContext : ApplicationContext
     private ToolStripMenuItem _powerItem = null!;
     private CancellationTokenSource? _netCts;
 
+    private Task _netTask = Task.CompletedTask;
+
     private void StartNetworking()
     {
         _netCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
-        _ = _bridge.RunNetworkingAsync(_netCts.Token).ContinueWith(
+        _netTask = _bridge.RunNetworkingAsync(_netCts.Token).ContinueWith(
             t => { if (t.Exception!.InnerExceptions.Any(e => e is not OperationCanceledException)) Logger.LogError(t.Exception); },
             TaskContinuationOptions.OnlyOnFaulted);
+    }
+
+    /// <summary>Stops the current link (waiting for it to close cleanly) and starts a new one.</summary>
+    private async void RestartNetworking()
+    {
+        _netCts?.Cancel();
+        try { await _netTask.WaitAsync(TimeSpan.FromSeconds(4)); } catch { /* cancelled or timed out: carry on */ }
+        if (_bridge.Powered && !_cts.IsCancellationRequested) StartNetworking();
+    }
+
+    /// <summary>Panel actions: open my own session (host), join another with a code, or leave.</summary>
+    private void Session(string action, string? code)
+    {
+        if (action == "join") _bridge.JoinSession(code); else _bridge.StartHosting();
+        RestartNetworking();
     }
 
     /// <summary>Master on/off: off hands control back locally, drops the connection and stops
@@ -110,7 +127,7 @@ public sealed class TrayAppContext : ApplicationContext
 
     private void ShowPanel()
     {
-        if (_panel is null || _panel.IsDisposed) _panel = new ControlPanelForm(_bridge, () => _status, ShowViewer, SetPower);
+        if (_panel is null || _panel.IsDisposed) _panel = new ControlPanelForm(_bridge, () => _status, ShowViewer, SetPower, Session);
         _panel.Show();
         if (_panel.WindowState == FormWindowState.Minimized) _panel.WindowState = FormWindowState.Normal;
         _panel.Activate();
@@ -122,6 +139,11 @@ public sealed class TrayAppContext : ApplicationContext
         if (!_bridge.CanUseExtras)
         {
             _trayIcon.ShowBalloonTip(2500, "TecLink", "La otra PC no está conectada o necesita esta misma versión de TecLink.", ToolTipIcon.Warning);
+            return;
+        }
+        if (!_bridge.ManagementAllowed)
+        {
+            _trayIcon.ShowBalloonTip(2500, "TecLink", "La gestión de pantallas está apagada. El anfitrión debe activarla.", ToolTipIcon.Warning);
             return;
         }
         if (_viewer is null || _viewer.IsDisposed) _viewer = new RemoteScreenForm(_bridge);

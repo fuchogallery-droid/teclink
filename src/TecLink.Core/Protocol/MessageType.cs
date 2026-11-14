@@ -22,6 +22,9 @@ public enum MessageType : byte
     FileData = 18,
     FileEnd = 19,
     TransferDone = 20,
+    Join = 21,         // guest -> host: session code
+    JoinResult = 22,   // host -> guest: accepted or refused (+ reason)
+    Management = 23,   // host -> guest: screens may be viewed/controlled (Accepted = on)
 }
 
 public enum MouseButtonKind : byte

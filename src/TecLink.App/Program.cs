@@ -1,3 +1,5 @@
+using TecLink.Core.Networking;
+
 namespace TecLink.App;
 
 internal static class Program
@@ -27,13 +29,10 @@ internal static class Program
 
         try
         {
-            var config = AppConfig.TryLoad();
-            if (config is null)
-            {
-                using var setup = new SetupForm();
-                if (setup.ShowDialog() != DialogResult.OK) return;
-                config = setup.Result;
-            }
+            // First run needs no form: this PC hosts its own session and the panel's
+            // "Conectar" tab handles inviting or joining.
+            var config = AppConfig.TryLoad() ?? new AppConfig { Role = PeerRole.Server };
+            if (SessionDiscovery.Normalize(config.SessionCode) is null) { config.SessionCode = SessionDiscovery.NewCode(); config.Save(); }
 
             using var app = new TrayAppContext(config);
             app.BindShowSignal(showPanel);
