@@ -134,3 +134,4 @@ details.join-more summary{cursor:pointer;min-height:40px;display:flex;align-item
 .monitor.offline,.room-card.offline,.grid-cell.offline{opacity:.5;border-style:dashed;filter:grayscale(1)}
 .grid-pc.offline{color:var(--muted);text-decoration:line-through}
 .chat-log li.system{align-self:center;max-width:100%;background:transparent;border:1px dashed var(--line);color:var(--muted);font-size:12px;text-align:center}
+.diag-out{margin:12px 0 0;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 ui-monospace,Consolas,monospace;user-select:text}

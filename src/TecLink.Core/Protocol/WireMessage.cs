@@ -94,6 +94,7 @@ public sealed class WireMessage
 
     /// <summary>First byte = 1 when the person is already cut out (transparent background); the rest is a WebP image.</summary>
     public static WireMessage CameraFrame(byte[] data) => new() { Type = MessageType.CameraFrame, Data = data };
+    public static WireMessage ProbeMsg(string code) => new() { Type = MessageType.Probe, Text = code };
     public static WireMessage Leave() => new() { Type = MessageType.Leave };
     public static WireMessage ChatText(string text) => new() { Type = MessageType.Chat, Text = text };
     public static WireMessage VoiceChunk(byte[] pcm) => new() { Type = MessageType.Voice, Data = pcm };
@@ -207,6 +208,7 @@ public sealed class WireMessage
                 w.Write(Data.Length); w.Write(Data);
                 break;
             case MessageType.Chat:
+            case MessageType.Probe:
             case MessageType.FileList:
             case MessageType.FileCommand:
                 w.Write(Text ?? "");
@@ -262,7 +264,7 @@ public sealed class WireMessage
             MessageType.SpatialMapAck => new WireMessage { Type = type, RequestId = r.ReadString(), Accepted = r.ReadBoolean(), Text = r.ReadString() },
             MessageType.ScreenStop or MessageType.ScreenAck => new WireMessage { Type = type },
             MessageType.CameraFrame or MessageType.Voice => new WireMessage { Type = type, Data = ReadBytes(r) },
-            MessageType.Chat or MessageType.FileList or MessageType.FileCommand => new WireMessage { Type = type, Text = r.ReadString() },
+            MessageType.Chat or MessageType.Probe or MessageType.FileList or MessageType.FileCommand => new WireMessage { Type = type, Text = r.ReadString() },
             MessageType.Join => new WireMessage { Type = type, Text = r.ReadString() },
             MessageType.JoinResult => new WireMessage { Type = type, Accepted = r.ReadBoolean(), Text = r.ReadString() },
             MessageType.Management => new WireMessage { Type = type, Accepted = r.ReadBoolean() },

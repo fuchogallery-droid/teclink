@@ -31,6 +31,7 @@ public enum MessageType : byte
     FileCommand = 27,     // "fetch:name" (send it to me) or "desktop:name" (put it on your desktop)
     Chat = 28,            // live chat text
     Voice = 29,           // microphone audio: 16 kHz mono 16-bit PCM
+    Probe = 31,           // guest -> host: 'do you have this code?' (answered with JoinResult, never admitted)
     Leave = 30,           // the sender is leaving the session on purpose (not a dropped link)
 }
 

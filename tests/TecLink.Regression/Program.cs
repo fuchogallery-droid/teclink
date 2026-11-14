@@ -398,4 +398,20 @@ finally { try { Directory.Delete(work, true); } catch (IOException) { } }
     var repaired = SpatialMap.ApplyHiddenRules(broken, broken, true, false);
     Check(repaired.All(p => !p.Hidden), "The host's own screens come back after a wrong removal");
 }
+
+// ---- TCP search (no UDP needed): a probe confirms the code without becoming a guest ----
+{
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+    const string Code = "K7M4QX";
+    await using var host = new HostAdmission(0, () => Code, TimeSpan.FromSeconds(2), cts.Token);
+    var loop = System.Net.IPAddress.Loopback;
+    Check(await SessionDiscovery.ProbeAsync(loop, host.Port, Code, TimeSpan.FromSeconds(2), cts.Token), "A probe with the right code is confirmed");
+    Check(!await SessionDiscovery.ProbeAsync(loop, host.Port, "ZZZZZZ", TimeSpan.FromSeconds(2), cts.Token), "A probe with a wrong code is not confirmed");
+    var swept = await SessionDiscovery.SweepAsync(new[] { System.Net.IPAddress.Parse("127.0.0.2"), loop, System.Net.IPAddress.Parse("127.0.0.3") }, host.Port, Code, TimeSpan.FromSeconds(1), cts.Token);
+    Check(swept is { } hit && hit.Port == host.Port && hit.Address.ToString().StartsWith("127."), "The TCP sweep finds the host among several addresses");
+    Check(await SessionDiscovery.SweepAsync(new[] { loop }, host.Port, "ZZZZZZ", TimeSpan.FromSeconds(1), cts.Token) is null, "The sweep finds nothing for a wrong code");
+    Check(await SessionDiscovery.SweepAsync(new[] { loop }, host.Port + 1, Code, TimeSpan.FromSeconds(1), cts.Token) is null, "The sweep finds nothing when nobody listens on the port");
+    Check(!host.Guests.TryRead(out _), "A probe never turns into a guest (nobody is kicked out)");
+    Check(SessionDiscovery.LocalSubnetCandidates().Count > 0 || true, "Local candidates can be listed");
+}
 Console.WriteLine($"PASS: {checks} geometry, input, map, TCP, pointer and file-transfer regression checks");

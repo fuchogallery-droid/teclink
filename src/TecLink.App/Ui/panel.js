@@ -19,6 +19,7 @@
     if (message.type === 'peerFiles') { renderFiles('peer-files', message.items, true); return; }
     if (message.type === 'chat') { TecChat.incoming(message.from, message.text, message.at); return; }
     if (message.type === 'voice') { TecChat.voice(message.data); return; }
+    if (message.type === 'diagnostic') { $('diag-out').textContent = message.lines.join('\n'); $('diag-out').hidden = false; $('diag-run').disabled = false; $('diag-run').textContent = 'Probar conexión'; $('diag-copy').hidden = false; return; }
     if (message.type === 'toast') { toast(message.message); return; }
     if (message.type === 'error') { saving = false; dirty = true; toast(message.message); update(); return; }
     if (!message.state) return;
@@ -194,6 +195,8 @@
   $('join-code').oninput = e => { const raw = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6); e.target.value = raw.length > 3 ? raw.slice(0, 3) + '-' + raw.slice(3) : raw; };
   $('join-code').onkeydown = e => { if (e.key === 'Enter') $('join-btn').click(); };
   $('join-btn').onclick = () => { const code = $('join-code').value.replace(/[^A-Za-z0-9]/g, ''); if (code.length !== 6) { toast('El código tiene 6 letras o números.'); return; } send({ type: 'session', action: 'join', code, address: $('join-address').value.trim() }); toast('Buscando la sesión en tu red…'); };
+  $('diag-run').onclick = () => { $('diag-run').disabled = true; $('diag-run').textContent = 'Probando…'; $('diag-out').hidden = false; $('diag-out').textContent = 'Revisando la red…'; send({ type: 'diagnose' }); };
+  $('diag-copy').onclick = async () => { try { await navigator.clipboard.writeText($('diag-out').textContent); toast('Informe copiado. Pégalo donde te lo pidan.'); } catch { toast('Selecciona el texto del informe y cópialo.'); } };
   $('firewall-btn').onclick = () => { send({ type: 'session', action: 'firewall' }); toast('Windows te pedirá permiso: pulsa Sí.'); };
   $('leave-btn').onclick = () => send({ type: 'session', action: 'host' });
   let pointerBusy = false, pointerTimer, chosenStyle = 'system';

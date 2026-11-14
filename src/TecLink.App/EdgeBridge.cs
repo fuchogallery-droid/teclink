@@ -197,6 +197,52 @@ public sealed class EdgeBridge : IDisposable
         .Where(a => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && !a.ToString().StartsWith("169.254."))
         .Select(a => a.ToString()).Distinct().ToArray();
 
+    /// <summary>A plain-Spanish report of what this PC can and cannot do on the network, to copy and send for support.</summary>
+    public async Task<List<string>> DiagnoseAsync(CancellationToken ct)
+    {
+        var lines = new List<string>();
+        string Yes(bool v) => v ? "sí" : "NO";
+        lines.Add($"TecLink {System.Reflection.Assembly.GetExecutingAssembly().GetName().Version} — {_config.MachineName}");
+        var addresses = LocalAddresses();
+        lines.Add("Direcciones de esta PC: " + (addresses.Length == 0 ? "NINGUNA (sin red)" : string.Join(", ", addresses)));
+        var host = _config.Role == PeerRole.Server;
+        lines.Add(host ? $"Papel: anfitrión, código {SessionDiscovery.Pretty(SessionDiscovery.Normalize(_config.SessionCode) ?? "")}" : $"Papel: invitado de la sesión {SessionDiscovery.Pretty(SessionDiscovery.Normalize(_config.JoinCode) ?? "")}");
+        lines.Add($"Regla de Firewall de TecLink: {Yes(FirewallAllowed())}");
+        try
+        {
+            using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("powershell", "-NoProfile -Command \"(Get-NetConnectionProfile | ForEach-Object { $_.Name + ' = ' + $_.NetworkCategory }) -join ', '\"")
+            { CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true });
+            var text = await p!.StandardOutput.ReadToEndAsync(ct); p.WaitForExit(6000);
+            lines.Add("Tipo de red (Privada es lo normal; Pública bloquea más): " + text.Trim());
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException) { }
+        if (host)
+        {
+            var tcp = System.Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties().GetActiveTcpListeners().Any(e => e.Port == _config.Port);
+            var udp = System.Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties().GetActiveUdpListeners().Any(e => e.Port == SessionDiscovery.DiscoveryPort);
+            lines.Add($"Escuchando conexiones (TCP {_config.Port}): {Yes(tcp)}; respondiendo búsquedas (UDP {SessionDiscovery.DiscoveryPort}): {Yes(udp)}");
+            lines.Add(tcp && udp ? "Esta PC está lista para recibir invitados. Si no entran, el bloqueo está en la otra PC o en la red." : "Esta PC NO está lista: reinicia TecLink o pulsa «Permitir en el Firewall».");
+        }
+        else
+        {
+            var code = SessionDiscovery.Normalize(_config.JoinCode);
+            if (code is not null)
+            {
+                var udp = await SessionDiscovery.FindAsync(code, TimeSpan.FromSeconds(3), ct);
+                lines.Add("Búsqueda por UDP: " + (udp is null ? "no encontró la sesión" : $"encontró {udp.Address}"));
+                var sweep = await SessionDiscovery.SweepAsync(SessionDiscovery.LocalSubnetCandidates(), _config.Port, code, TimeSpan.FromMilliseconds(700), ct);
+                lines.Add("Búsqueda por TCP (todas las direcciones de tu red): " + (sweep is null ? "no encontró la sesión" : $"encontró {sweep.Address}"));
+                lines.Add(udp is null && sweep is null
+                    ? "No se encontró. Revisa: 1) el código; 2) que la otra PC tenga TecLink abierto y en esta misma red Wi‑Fi (no en otra, ni con «aislamiento de clientes»); 3) que en la otra PC se pulsó «Permitir en el Firewall»."
+                    : "La sesión es alcanzable desde esta PC.");
+            }
+            else lines.Add("Esta PC no está intentando unirse a ninguna sesión.");
+        }
+        try { lines.Add("— Registro reciente —"); var log = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TecLink", "connection.log"); if (File.Exists(log)) lines.AddRange(File.ReadLines(log).TakeLast(8)); }
+        catch (IOException) { }
+        return lines;
+    }
+
     private const string FirewallRuleName = "TecLink (sesiones)";
     private static (DateTime At, bool Ok) _firewallCache;
 
@@ -216,11 +262,11 @@ public sealed class EdgeBridge : IDisposable
         return ok;
     }
 
-    /// <summary>Asks Windows (one UAC prompt) to allow TecLink on private and domain networks.</summary>
+    /// <summary>Asks Windows (one UAC prompt) to allow TecLink on any network profile (without it a "Public" Wi-Fi drops everything). Nothing is admitted without the invitation code.</summary>
     public void AllowFirewall()
     {
         var exe = Application.ExecutablePath;
-        var args = $"advfirewall firewall add rule name=\"{FirewallRuleName}\" dir=in action=allow program=\"{exe}\" enable=yes profile=private,domain";
+        var args = $"advfirewall firewall add rule name=\"{FirewallRuleName}\" dir=in action=allow program=\"{exe}\" enable=yes profile=any";
         try
         {
             using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("netsh", args)
@@ -330,7 +376,8 @@ public sealed class EdgeBridge : IDisposable
                 }
                 else if (guestCode is not null)
                 {
-                    var host = await SessionDiscovery.FindAsync(guestCode, TimeSpan.FromSeconds(5), ct);
+                    var (host, how) = await SessionDiscovery.FindHostAsync(guestCode, _config.Port, TimeSpan.FromSeconds(6), ct);
+                    if (host is not null) Logger.Info($"Sesión encontrada en {host.Address} (búsqueda {how}).");
                     var hostAddress = host?.Address.ToString();
                     var hostPort = host?.Port ?? _config.Port;
                     if (host is null && !string.IsNullOrWhiteSpace(_config.PeerHost))

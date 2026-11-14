@@ -86,7 +86,18 @@ public sealed class HostAdmission : IAsyncDisposable
             connection = new PeerConnection(client);
             var holder = new AdmittedConnection(connection);
             var joined = new TaskCompletionSource<WireMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
-            connection.MessageReceived += message => { if (message.Type == MessageType.Join) joined.TrySetResult(message); holder.Receive(message); };
+            connection.MessageReceived += message =>
+            {
+                if (message.Type == MessageType.Probe)
+                {
+                    // A guest only asks "is this the session with my code?"; it is answered and closed, never admitted.
+                    var match = SessionDiscovery.Normalize(message.Text) is { } asked && asked == SessionDiscovery.Normalize(_expectedCode());
+                    _ = Task.Run(async () => { try { await connection.SendAsync(WireMessage.JoinResult(match, "sonda")); await Task.Delay(250); } catch (Exception) { } joined.TrySetCanceled(); });
+                    return;
+                }
+                if (message.Type == MessageType.Join) joined.TrySetResult(message);
+                holder.Receive(message);
+            };
             connection.Disconnected += () => joined.TrySetCanceled();
             connection.StartReceiving();
 

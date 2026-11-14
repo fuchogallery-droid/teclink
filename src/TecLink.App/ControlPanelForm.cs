@@ -161,6 +161,13 @@ public sealed class ControlPanelForm : Form
                     }
                     break;
                 case "peerFileAction": _bridge.PeerFileCommand(root.GetProperty("action").GetString() ?? "", root.GetProperty("name").GetString() ?? ""); break;
+                case "diagnose":
+                    _ = Task.Run(async () =>
+                    {
+                        var lines = await _bridge.DiagnoseAsync(CancellationToken.None);
+                        if (!IsDisposed && IsHandleCreated) BeginInvoke(() => Post(new { type = "diagnostic", lines }));
+                    });
+                    break;
                 case "setManagement": _bridge.SetManagement(root.GetProperty("on").GetBoolean()); RefreshState(); break;
             }
         }
