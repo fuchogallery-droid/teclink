@@ -135,3 +135,15 @@ details.join-more summary{cursor:pointer;min-height:40px;display:flex;align-item
 .grid-pc.offline{color:var(--muted);text-decoration:line-through}
 .chat-log li.system{align-self:center;max-width:100%;background:transparent;border:1px dashed var(--line);color:var(--muted);font-size:12px;text-align:center}
 .diag-out{margin:12px 0 0;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 ui-monospace,Consolas,monospace;user-select:text}
+.statusbar{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:14px 18px;margin:0 0 16px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+.sb-dot{width:16px;height:16px;border-radius:50%;flex:none;background:var(--muted)}
+.sb-dot.ok{background:var(--accent);box-shadow:0 0 0 4px rgba(0,255,102,.2)}
+.sb-dot.live{background:var(--accent);animation:chatPulse 1.2s ease-in-out infinite}
+.sb-dot.warn{background:#ffb020;box-shadow:0 0 0 4px rgba(255,176,32,.2)}
+.sb-dot.bad{background:var(--red)}
+.sb-text{flex:1;min-width:220px;display:flex;flex-direction:column;gap:2px}
+.sb-text strong{font-size:18px}
+.sb-text span{font-size:14px;color:var(--muted)}
+.sb-actions{display:flex;gap:10px;flex-wrap:wrap}
+.sb-actions button{min-height:48px;padding:0 20px;font-size:16px}
+main>nav.tabs,main>.statusbar{flex:none}

@@ -111,6 +111,7 @@
     for (const [id, value] of Object.entries({ 'connection-title': state.connected ? 'Tus equipos están conectados' : 'Esperando conexión', 'detail-name': state.machineName, 'detail-remote': state.remoteName || '—', 'detail-role': state.role === 'Server' ? 'Anfitrión de la sesión' : state.joinCode ? 'Invitado' : 'Enlace directo por IP', 'detail-host': state.host, 'detail-port': state.port, 'detail-status': state.status })) $(id).textContent = value;
     peerChanges();
     updateSession();
+    updateStatusBar();
     const extras = !!state.extras, level = state.pointerSpeed || 10, size = state.cursorSize || 100, style = state.cursorStyle || 'system';
     if (!pointerBusy) { $('speed').value = level; $('cursor-size').value = size; chosenStyle = style; }
     $('speed-label').textContent = `${$('speed').value} de 20`; $('size-label').textContent = `${$('cursor-size').value} %`;
@@ -127,6 +128,23 @@
     if (state.receiveFolder) $('receive-folder').textContent = state.receiveFolder;
     draw();
   }
+  // ---- Barra de estado: siempre visible, con un boton grande que cambia segun lo que pasa ----
+  function updateStatusBar() {
+    const on = state.powered !== false, host = state.role === 'Server', name = state.remoteName || 'la otra PC';
+    let dot = 'off', title = '', sub = '', main = null;
+    if (!on) { title = 'TecLink está apagado'; sub = 'No comparte mouse ni teclado.'; main = { label: 'Encender', act: () => send({ type: 'setPower', on: true }) }; }
+    else if (!state.connected) {
+      const gone = state.peerStatus === 'left' ? `${name} salió de la sesión` : state.peerStatus === 'lost' ? `${name} se desconectó` : '';
+      if (!host && state.joinCode && !gone) { dot = 'warn'; title = 'Buscando la sesión…'; sub = state.joinNotice || 'La otra PC debe tener TecLink abierto en esta misma red.'; main = { label: 'Cancelar', act: () => send({ type: 'session', action: 'host' }) }; }
+      else { dot = gone ? 'bad' : 'off'; title = gone || 'Sin conexión'; sub = `Tu código: ${state.sessionCode || '—'}. Escríbelo en la otra PC, o conéctate al código de la otra.`; main = { label: 'Conectar a otra PC', act: () => { document.querySelector('[data-tab=connection]').click(); setTimeout(() => $('join-code').focus(), 50); } }; }
+    } else if (state.mode === 'remote') { dot = 'live'; title = `Controlando a ${name}`; sub = 'Tu mouse y tu teclado están en la otra PC.'; main = { label: 'Volver a esta PC', act: () => send({ type: 'toggleControl' }) }; }
+    else if (state.mode === 'peer') { dot = 'live'; title = `${name} tiene el mouse`; sub = 'La otra PC está manejando esta.'; main = { label: 'Recuperar mi mouse', act: () => send({ type: 'freeInput' }) }; }
+    else if (state.sessionMode && !state.management) { dot = 'warn'; title = `Conectado con ${name}: el mouse NO pasa todavía`; sub = host ? 'Activa la gestión de pantallas para mover el mouse entre las dos PCs.' : 'El anfitrión debe activar la gestión de pantallas.'; main = host ? { label: 'Activar gestión', act: () => send({ type: 'setManagement', on: true }) } : null; }
+    else { dot = 'ok'; title = `Conectado con ${name}`; sub = 'Lleva el mouse al borde de la pantalla, o pulsa el botón, para pasar a la otra PC.'; main = { label: `Pasar el mouse a ${name}`, act: () => send({ type: 'toggleControl' }) }; }
+    $('sb-dot').className = 'sb-dot ' + dot; $('sb-title').textContent = title; $('sb-sub').textContent = sub;
+    const b = $('sb-main'); b.hidden = !main; if (main) { b.textContent = main.label; b.onclick = main.act; }
+  }
+  $('sb-free').onclick = () => { send({ type: 'freeInput' }); toast('Mouse y teclado liberados en esta PC.'); };
   // ---- Salida de la otra PC: aviso y suite vacia ----
   let lastPeer;
   function peerChanges() {

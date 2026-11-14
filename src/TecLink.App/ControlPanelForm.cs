@@ -168,6 +168,7 @@ public sealed class ControlPanelForm : Form
                         if (!IsDisposed && IsHandleCreated) BeginInvoke(() => Post(new { type = "diagnostic", lines }));
                     });
                     break;
+                case "freeInput": _bridge.FreeInput(); RefreshState(); break;
                 case "setManagement": _bridge.SetManagement(root.GetProperty("on").GetBoolean()); RefreshState(); break;
             }
         }

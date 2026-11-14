@@ -29,6 +29,7 @@ public sealed class TrayAppContext : ApplicationContext
         var menu = new ContextMenuStrip();
         menu.Items.Add("Abrir panel de pantallas", null, (_, _) => ShowPanel());
         menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("Liberar mouse y teclado", null, (_, _) => _bridge.FreeInput());
         menu.Items.Add("Pasar mando a la otra PC", null, (_, _) => _bridge.ToggleControl());
         menu.Items.Add("Tomar mando aquí", null, (_, _) => _bridge.ToggleControl());
         menu.Items.Add(new ToolStripSeparator());

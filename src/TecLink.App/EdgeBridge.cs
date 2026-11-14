@@ -150,8 +150,50 @@ public sealed class EdgeBridge : IDisposable
         _clipboard.TextCopied += OnLocalClipboardCopied;
     }
 
+    /// <summary>The "I just want my mouse and keyboard back" button: leaves Remote mode and releases every hook and held key.</summary>
+    public void FreeInput()
+    {
+        var wasControlled = _peerControlling;
+        _viewInput = false; _peerControlling = false;
+        _mouseHook.Swallow = false; _keyboardHook.Swallow = false;
+        SwitchToLocal(force: true);
+        ReleaseAllRemoteHeldInput(); ReleaseAllInjectedInput();
+        if (wasControlled && _connection is { } peer) _ = peer.SendAsync(WireMessage.SwitchToRemote()); // ask the PC that was controlling this one to let go
+        StatusChanged?.Invoke("Mouse y teclado liberados en esta PC.");
+    }
+
+    private long _beat = Environment.TickCount64;
+    private volatile bool _watchdogTripped;
+    private System.Threading.Timer? _watchdog;
+
+    /// <summary>The global hooks live on the UI thread. If it ever stalls while TecLink is holding the mouse and keyboard,
+    /// the whole PC would feel dead: this thread-pool timer lets go after 1.5 s without a heartbeat.</summary>
+    private void StartWatchdog()
+    {
+        _watchdog = new System.Threading.Timer(_ =>
+        {
+            if (_clipboard.IsDisposed) return;
+            var late = Environment.TickCount64 - Interlocked.Read(ref _beat);
+            if (late > 1500 && (_mouseHook.Swallow || _keyboardHook.Swallow))
+            {
+                _mouseHook.Swallow = false; _keyboardHook.Swallow = false; _watchdogTripped = true;
+                Logger.Info($"La interfaz tardó {late} ms en responder: se soltaron el mouse y el teclado por seguridad.");
+            }
+            try
+            {
+                _clipboard.BeginInvoke(() =>
+                {
+                    Interlocked.Exchange(ref _beat, Environment.TickCount64);
+                    if (_watchdogTripped) { _watchdogTripped = false; FreeInput(); }
+                });
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException) { }
+        }, null, 500, 500);
+    }
+
     public void InstallHooks()
     {
+        StartWatchdog();
         _rawMouse.Install();
         _mouseHook.Install();
         _keyboardHook.Install();
@@ -207,7 +249,7 @@ public sealed class EdgeBridge : IDisposable
         lines.Add("Direcciones de esta PC: " + (addresses.Length == 0 ? "NINGUNA (sin red)" : string.Join(", ", addresses)));
         var host = _config.Role == PeerRole.Server;
         lines.Add(host ? $"Papel: anfitrión, código {SessionDiscovery.Pretty(SessionDiscovery.Normalize(_config.SessionCode) ?? "")}" : $"Papel: invitado de la sesión {SessionDiscovery.Pretty(SessionDiscovery.Normalize(_config.JoinCode) ?? "")}");
-        lines.Add($"Regla de Firewall de TecLink: {Yes(FirewallAllowed())}");
+        lines.Add($"Windows permite conexiones entrantes a TecLink: {Yes(CheckFirewall())}");
         try
         {
             using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("powershell", "-NoProfile -Command \"(Get-NetConnectionProfile | ForEach-Object { $_.Name + ' = ' + $_.NetworkCategory }) -join ', '\"")
@@ -246,22 +288,63 @@ public sealed class EdgeBridge : IDisposable
     private const string FirewallRuleName = "TecLink (sesiones)";
     private static (DateTime At, bool Ok) _firewallCache;
 
-    /// <summary>True when Windows already has an inbound allow rule for TecLink (cached for 20 s).</summary>
+    private static volatile bool _firewallOk = true; // unknown = do not nag
+    private static long _firewallAt;
+    private static int _firewallBusy;
+
+    /// <summary>Last known answer, instantly. The check itself runs in the background: this is called from the
+    /// UI thread, which also serves the global mouse hook, so it must NEVER wait for Windows.</summary>
     public static bool FirewallAllowed()
     {
-        if (DateTime.UtcNow - _firewallCache.At < TimeSpan.FromSeconds(20)) return _firewallCache.Ok;
-        var ok = false;
+        if (Environment.TickCount64 - Interlocked.Read(ref _firewallAt) > 30_000 && Interlocked.Exchange(ref _firewallBusy, 1) == 0)
+            Task.Run(() => { try { _firewallOk = CheckFirewall(); } catch (Exception ex) { Logger.LogError(ex); } finally { Interlocked.Exchange(ref _firewallAt, Environment.TickCount64); Interlocked.Exchange(ref _firewallBusy, 0); } });
+        return _firewallOk;
+    }
+
+    /// <summary>The real (slow) check: an enabled inbound "allow" rule for this program or for TecLink's own rule.</summary>
+    public static bool CheckFirewall()
+    {
+        try
+        {
+            var type = Type.GetTypeFromProgID("HNetCfg.FwPolicy2");
+            if (type is not null)
+            {
+                dynamic policy = Activator.CreateInstance(type)!;
+                var exe = Application.ExecutablePath;
+                foreach (dynamic rule in policy.Rules)
+                {
+                    try
+                    {
+                        if (!(bool)rule.Enabled || (int)rule.Direction != 1 || (int)rule.Action != 1) continue;
+                        if (string.Equals((string?)rule.Name, FirewallRuleName, StringComparison.OrdinalIgnoreCase)) return true;
+                        if (string.Equals((string?)rule.ApplicationName, exe, StringComparison.OrdinalIgnoreCase)) return true;
+                    }
+                    catch (Exception) { /* a rule we cannot read */ }
+                }
+                return false;
+            }
+        }
+        catch (Exception ex) when (ex is System.Runtime.InteropServices.COMException or InvalidOperationException or Microsoft.CSharp.RuntimeBinder.RuntimeBinderException) { }
         try
         {
             using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("netsh", $"advfirewall firewall show rule name=\"{FirewallRuleName}\"")
             { CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true });
-            p!.StandardOutput.ReadToEnd(); p.WaitForExit(4000); ok = p.ExitCode == 0;
+            p!.StandardOutput.ReadToEnd(); p.WaitForExit(4000); return p.ExitCode == 0;
         }
-        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException) { }
-        _firewallCache = (DateTime.UtcNow, ok);
-        return ok;
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException) { return true; }
     }
 
+    private static string[] _addresses = Array.Empty<string>();
+    private static long _addressesAt;
+    private static string[] CachedAddresses()
+    {
+        if (Environment.TickCount64 - Interlocked.Read(ref _addressesAt) > 15_000)
+        {
+            Interlocked.Exchange(ref _addressesAt, Environment.TickCount64);
+            Task.Run(() => { try { _addresses = LocalAddresses(); } catch (Exception) { } });
+        }
+        return _addresses;
+    }
     /// <summary>Asks Windows (one UAC prompt) to allow TecLink on any network profile (without it a "Public" Wi-Fi drops everything). Nothing is admitted without the invitation code.</summary>
     public void AllowFirewall()
     {
@@ -274,8 +357,8 @@ public sealed class EdgeBridge : IDisposable
             p?.WaitForExit(15000);
         }
         catch (System.ComponentModel.Win32Exception) { StatusChanged?.Invoke("No se concedió el permiso de Windows. Vuelve a intentarlo y pulsa Sí."); return; }
-        _firewallCache = default;
-        StatusChanged?.Invoke(FirewallAllowed() ? "Firewall listo: TecLink puede recibir conexiones." : "No se pudo crear la regla del Firewall.");
+        var ok = CheckFirewall(); _firewallOk = ok; Interlocked.Exchange(ref _firewallAt, Environment.TickCount64);
+        StatusChanged?.Invoke(ok ? "Firewall listo: TecLink puede recibir conexiones." : "No se pudo crear la regla del Firewall.");
     }
 
     /// <summary>Host only: lets both PCs see and control each other's screens, or closes that again.</summary>
@@ -922,7 +1005,7 @@ public sealed class EdgeBridge : IDisposable
             sessionCode = SessionDiscovery.Pretty(SessionDiscovery.Normalize(_config.SessionCode) ?? ""),
             joinCode = SessionDiscovery.Pretty(SessionDiscovery.Normalize(_config.JoinCode) ?? ""),
             sessionMode = _sessionMode, management = _management, joinNotice = _joinNotice, maxScreens = MaxScreens,
-            addresses = LocalAddresses(), firewall = FirewallAllowed(), peerAddress = _config.PeerHost,
+            addresses = CachedAddresses(), firewall = FirewallAllowed(), peerAddress = _config.PeerHost,
             pointerSpeed = CurrentSpeedLevel(), cursorStyle = CursorStyler.Normalize(_config.CursorStyle),
             cursorSize = CursorStyler.ClampSize(_config.CursorSizePercent), extras = CanUseExtras,
             transfer = Files.LastStatus, receiveFolder = Files.ReceiveFolder,
@@ -1090,6 +1173,7 @@ public sealed class EdgeBridge : IDisposable
 
     public void Dispose()
     {
+        _watchdog?.Dispose();
         _screenHost.Dispose();
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         _mouseHook.Dispose();
