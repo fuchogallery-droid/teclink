@@ -17,13 +17,17 @@ internal sealed class ScreenShareHost : IDisposable
 
     public bool Active => _cts is not null;
 
-    public void Start(PeerConnection connection, int index, int maxWidth, int maxHeight)
+    public void Start(PeerConnection connection, int index, int maxWidth, int maxHeight) =>
+        Start(index, maxWidth, maxHeight, message => connection.SendAsync(message));
+
+    /// <summary>Streams to any destination (the peer, or a window on this same PC). Whoever receives the frame must call <see cref="Ack"/>.</summary>
+    public void Start(int index, int maxWidth, int maxHeight, Func<WireMessage, Task> send)
     {
         Stop();
         var cts = _cts = new CancellationTokenSource();
         maxWidth = Math.Clamp(maxWidth, 320, 7680);
         maxHeight = Math.Clamp(maxHeight, 200, 4320);
-        _ = Task.Run(() => RunAsync(connection, index, maxWidth, maxHeight, cts.Token));
+        _ = Task.Run(() => RunAsync(send, index, maxWidth, maxHeight, cts.Token));
     }
 
     public void Stop()
@@ -40,12 +44,12 @@ internal sealed class ScreenShareHost : IDisposable
         catch (SemaphoreFullException) { }
     }
 
-    private async Task RunAsync(PeerConnection connection, int index, int maxWidth, int maxHeight, CancellationToken ct)
+    private async Task RunAsync(Func<WireMessage, Task> send, int index, int maxWidth, int maxHeight, CancellationToken ct)
     {
         Bitmap? full = null, scaled = null;
         ulong lastHash = 0;
         using var parameters = new EncoderParameters(1);
-        parameters.Param[0] = new EncoderParameter(Encoder.Quality, 68L);
+        parameters.Param[0] = new EncoderParameter(Encoder.Quality, 90L);
         try
         {
             while (!ct.IsCancellationRequested)
@@ -71,8 +75,8 @@ internal sealed class ScreenShareHost : IDisposable
                         var size = new Size(Math.Max(1, (int)(bounds.Width * ratio)), Math.Max(1, (int)(bounds.Height * ratio)));
                         if (scaled is null || scaled.Size != size) { scaled?.Dispose(); scaled = new Bitmap(size.Width, size.Height, PixelFormat.Format32bppRgb); }
                         using var g = Graphics.FromImage(scaled);
-                        g.InterpolationMode = InterpolationMode.Bilinear;
-                        g.PixelOffsetMode = PixelOffsetMode.Half;
+                        g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                        g.PixelOffsetMode = PixelOffsetMode.HighQuality;
                         g.DrawImage(full, new Rectangle(Point.Empty, size));
                         source = scaled;
                     }
@@ -92,7 +96,7 @@ internal sealed class ScreenShareHost : IDisposable
                     {
                         lastHash = hash;
                         while (_ack.CurrentCount > 0) await _ack.WaitAsync(ct);
-                        await connection.SendAsync(WireMessage.ScreenFrame(index, bounds.Left - desktop.Left, bounds.Top - desktop.Top, bounds.Width, bounds.Height, jpeg));
+                        await send(WireMessage.ScreenFrame(index, bounds.Left - desktop.Left, bounds.Top - desktop.Top, bounds.Width, bounds.Height, jpeg));
                         await _ack.WaitAsync(3000, ct);
                     }
                 }

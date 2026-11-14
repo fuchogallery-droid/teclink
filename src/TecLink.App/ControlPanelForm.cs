@@ -29,6 +29,7 @@ public sealed class ControlPanelForm : Form
     }
 
     private readonly Action<bool> _setPower;
+    private readonly Action<bool, string?> _fullScreen;
     private readonly Action<string, string?, string?> _session;
     private readonly Action<byte[]> _cameraHandler;
     private readonly Action<string> _peerFilesHandler;
@@ -40,9 +41,9 @@ public sealed class ControlPanelForm : Form
     private readonly Action _controlOffHandler;
     private bool _tileControl;
 
-    public ControlPanelForm(EdgeBridge bridge, Func<string> status, Action openViewer, Action<bool> setPower, Action<string, string?, string?> session)
+    public ControlPanelForm(EdgeBridge bridge, Func<string> status, Action openViewer, Action<bool> setPower, Action<string, string?, string?> session, Action<bool, string?> fullScreen)
     {
-        _bridge = bridge; _status = status; _openViewer = openViewer; _setPower = setPower; _session = session;
+        _bridge = bridge; _status = status; _openViewer = openViewer; _setPower = setPower; _session = session; _fullScreen = fullScreen;
         Text = "TecLink — pantallas y salidas";
         Icon = TrayAppContext.AppIcon;
         ClientSize = new Size(1120, 760);
@@ -166,6 +167,12 @@ public sealed class ControlPanelForm : Form
                         var count = Screen.AllScreens.Length;
                         if (!IsDisposed && IsHandleCreated) BeginInvoke(() => { Post(new { type = "toast", message = count > 1 ? $"Windows detectó {count} pantallas." : "Windows sigue viendo una sola pantalla. Revisa el cable HDMI y que el monitor esté en esa entrada; también prueba Windows + Ctrl + Shift + B." }); RefreshState(); });
                     });
+                    break;
+                case "fullscreen":
+                    var remoteScreen = root.GetProperty("remote").GetBoolean();
+                    if (remoteScreen && !(_bridge.CanUseExtras && _bridge.ManagementAllowed)) { Post(new { type = "toast", message = "Activa «Gestión de pantallas» para ver la pantalla de la otra PC." }); break; }
+                    if (!remoteScreen && Screen.AllScreens.Length < 2) { Post(new { type = "toast", message = "Necesitas otro monitor para verla a pantalla completa: en un solo monitor usa «Extender pantalla»." }); break; }
+                    _fullScreen(remoteScreen, root.GetProperty("id").GetString());
                     break;
                 case "removeAsk": _bridge.RequestRemoveScreen(root.GetProperty("id").GetString() ?? ""); break;
                 case "removeAnswer": _bridge.AnswerRemoval(root.GetProperty("id").GetString() ?? "", root.GetProperty("accept").GetBoolean()); break;

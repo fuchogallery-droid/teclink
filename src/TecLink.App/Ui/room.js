@@ -74,7 +74,7 @@
     if (item.kind === 'screen') {
       node.setAttribute('role', 'group');
       node.innerHTML = '<div class="rc-head"><div class="rc-title"><strong></strong><small></small></div><button class="rc-release primary" type="button" hidden>Soltar control</button><button class="rc-exit secondary" type="button" hidden>Salir de pantalla completa</button></div>' +
-        '<div class="rc-view"><img class="rc-img" alt="" draggable="false" hidden><p class="rc-wait"></p><div class="rc-actions"><button class="secondary" data-act="full" type="button">Pantalla completa</button><button class="secondary" data-act="control" type="button">Controlar</button><button class="secondary" data-act="hide" type="button">Ocultar</button><button class="secondary danger" data-act="remove" type="button">Quitar</button></div></div>';
+        '<div class="rc-view"><img class="rc-img" alt="" draggable="false" hidden><p class="rc-wait"></p><div class="rc-actions"><button class="secondary" data-act="full" type="button">Extender pantalla</button><button class="secondary" data-act="screenfull" type="button">Pantalla completa</button><button class="secondary" data-act="control" type="button">Controlar</button><button class="secondary" data-act="hide" type="button">Ocultar</button><button class="secondary danger" data-act="remove" type="button">Quitar</button></div></div>';
       node.querySelector('.rc-head').onpointerdown = e => { if (!e.target.closest('button')) startDrag(e, node, item.key, 'move'); };
       node.querySelector('.rc-actions').onclick = e => { const act = e.target.closest('button')?.dataset.act; if (act) action(item, act); };
       node.querySelector('.rc-exit').onclick = () => setFull(null);
@@ -110,6 +110,7 @@
 
   function action(item, act) {
     if (act === 'full') setFull(full === item.key ? null : item.key);
+    else if (act === 'screenfull') { if (item.remote && !canSee()) { api.toast('Activa «Gestión de pantallas» para ver la pantalla de la otra PC.'); return; } api.send({ type: 'fullscreen', remote: item.remote, id: item.screen.id }); }
     else if (act === 'hide') { layout()[item.key].hidden = true; if (full === item.key) full = null; save(); signature = ''; render(); api.toast('Pantalla oculta solo para ti. Vuelve a mostrarla con «Mostrar ocultas».'); }
     else if (act === 'control') { if (!canSee()) { api.toast('Activa «Gestión de pantallas» para controlar la otra PC.'); return; } setFull(item.key); setControl(item.key); }
     else if (act === 'remove') { api.send({ type: 'removeAsk', id: item.screen.id }); }
@@ -186,7 +187,7 @@
         wait.hidden = !img.hidden; wait.textContent = item.offline ? 'Desconectada' : blocked ? (state.role === 'Server' ? 'Activa «Gestión de pantallas» (barra de arriba) para ver esta pantalla.' : 'El dueño de la sala debe activar la gestión de pantallas.') : 'Cargando imagen en vivo…';
         node.querySelector('.rc-exit').hidden = !isFull || controlling; node.querySelector('.rc-release').hidden = !controlling;
         const b = act => node.querySelector(`[data-act=${act}]`);
-        b('full').textContent = isFull ? 'Salir de pantalla completa' : 'Pantalla completa';
+        b('full').textContent = isFull ? 'Quitar extensión' : 'Extender pantalla'; b('screenfull').disabled = item.offline || (item.remote && !canSee());
         b('control').hidden = !item.remote || controlling; b('control').disabled = item.offline || !canSee();
         b('remove').hidden = !(item.remote && admin); b('remove').disabled = item.offline;
         b('hide').hidden = controlling;

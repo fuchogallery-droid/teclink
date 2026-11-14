@@ -144,14 +144,30 @@ public sealed class TrayAppContext : ApplicationContext
 
     private void ShowPanel()
     {
-        if (_panel is null || _panel.IsDisposed) _panel = new ControlPanelForm(_bridge, () => _status, ShowViewer, SetPower, Session);
+        if (_panel is null || _panel.IsDisposed) _panel = new ControlPanelForm(_bridge, () => _status, () => ShowViewer(), SetPower, Session, ShowFullScreen);
         _panel.Show();
         if (_panel.WindowState == FormWindowState.Minimized) _panel.WindowState = FormWindowState.Normal;
         _panel.Activate();
         _panel.RefreshState();
     }
 
-    private void ShowViewer()
+    /// <summary>A screen across the whole monitor: one of the other PC's (controllable) or one of this PC's own (view only).</summary>
+    private void ShowFullScreen(bool remote, string? screenId)
+    {
+        if (!remote)
+        {
+            // It covers the monitor that holds the panel; the monitor being shown is another one (the panel is excluded from captures anyway).
+            var target = _panel is { IsDisposed: false, Visible: true } ? Screen.FromControl(_panel) : Screen.FromPoint(Cursor.Position);
+            if (_viewer is { IsDisposed: false }) _viewer.Close();
+            _viewer = new RemoteScreenForm(_bridge, local: true, screenId, target);
+            _viewer.Show(); _viewer.Activate();
+            return;
+        }
+        if (_viewer is { IsDisposed: false }) _viewer.Close();
+        ShowViewer(screenId);
+    }
+
+    private void ShowViewer(string? screenId = null)
     {
         if (!_bridge.CanUseExtras)
         {
@@ -163,7 +179,7 @@ public sealed class TrayAppContext : ApplicationContext
             _trayIcon.ShowBalloonTip(2500, "TecLink", "La gestión de pantallas está apagada. El anfitrión debe activarla.", ToolTipIcon.Warning);
             return;
         }
-        if (_viewer is null || _viewer.IsDisposed) _viewer = new RemoteScreenForm(_bridge);
+        if (_viewer is null || _viewer.IsDisposed) _viewer = new RemoteScreenForm(_bridge, local: false, screenId);
         _viewer.Show();
         _viewer.Activate();
     }

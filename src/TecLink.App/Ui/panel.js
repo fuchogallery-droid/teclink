@@ -329,7 +329,7 @@
   function openSettings(open) { drawer.hidden = scrim.hidden = !open; if (open) $('settings-close').focus(); else $('settings-open').focus(); }
   $('settings-open').onclick = () => openSettings(true); $('settings-close').onclick = () => openSettings(false); scrim.onclick = () => openSettings(false);
   addEventListener('keydown', e => { if (e.key === 'Escape' && !drawer.hidden) openSettings(false); });
-  const colorMap = { bg: ['--bg'], panel: ['--panel', '--raised'], line: ['--line', '--grid'], accent: ['--accent'], text: ['--text'] };
+  const colorMap = { bg: ['--bg'], panel: ['--panel', '--raised'], line: ['--line', '--grid', '--brand'], accent: ['--accent'], text: ['--text'] };
   const saved = () => { try { return JSON.parse(localStorage.getItem('tecColors') || '{}'); } catch { return {}; } };
   function applyColors() {
     const c = saved();

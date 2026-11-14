@@ -23,54 +23,84 @@ public sealed class RemoteScreenForm : Form
     private int _display;
     private bool _closed;
 
-    public RemoteScreenForm(EdgeBridge bridge)
+    private readonly bool _local;               // showing one of THIS PC's screens (view only)
+    private readonly ScreenShareHost? _localHost;
+    private readonly System.Windows.Forms.Timer _barTimer = new() { Interval = 120 };
+    private readonly FlowLayoutPanel _bar;
+
+    /// <param name="local">true = one of this PC's own screens; false = a screen of the other PC (controllable).</param>
+    /// <param name="screenId">The monitor to show (its id); null = the first.</param>
+    /// <param name="target">The monitor of THIS PC the window covers; null = the one with the mouse.</param>
+    public RemoteScreenForm(EdgeBridge bridge, bool local = false, string? screenId = null, Screen? target = null)
     {
-        _bridge = bridge;
-        Text = "TecLink — pantalla de " + bridge.RemoteName;
+        _bridge = bridge; _local = local;
+        if (local) _localHost = new ScreenShareHost();
+        Text = local ? "TecLink — pantalla completa" : "TecLink — pantalla de " + bridge.RemoteName;
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.Manual;
-        Bounds = Screen.FromPoint(Cursor.Position).Bounds;
+        Bounds = (target ?? Screen.FromPoint(Cursor.Position)).Bounds;
         BackColor = Color.FromArgb(18, 18, 18);
         Font = new Font("Segoe UI", 9.5f);
         ShowInTaskbar = true;
         _dot = CreateDotCursor();
 
-        var bar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = LogicalToDeviceUnits(40), BackColor = Color.FromArgb(18, 18, 18), WrapContents = false, Padding = new Padding(0, LogicalToDeviceUnits(3), 0, 0) };
-        _title.Text = "Pantalla de " + bridge.RemoteName;
+        // The picture owns the whole monitor; the bar floats over it and only shows when the mouse touches the top edge.
+        var bar = _bar = new FlowLayoutPanel { Left = 0, Top = 0, Width = Width, Height = LogicalToDeviceUnits(44), BackColor = Color.FromArgb(18, 18, 18), WrapContents = false, Padding = new Padding(0, LogicalToDeviceUnits(3), 0, 0), Visible = false, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+        var remote = local ? Screen.AllScreens.Select((s, n) => new TecLink.Core.DisplayInfo(s.DeviceName, s.Bounds.Left, s.Bounds.Top, s.Bounds.Width, s.Bounds.Height)).ToList() : bridge.RemoteDisplays.ToList();
+        _display = Math.Max(0, remote.FindIndex(d => d.Id == screenId));
+        _title.Text = local ? "Pantalla completa" : "Pantalla de " + bridge.RemoteName;
         bar.Controls.Add(_title);
-        var remote = bridge.RemoteDisplays;
         if (remote.Count > 1)
         {
             for (var n = 0; n < remote.Count; n++) _displays.Items.Add($"Pantalla {n + 1} · {remote[n].Width} × {remote[n].Height}");
-            _displays.SelectedIndex = 0;
+            _displays.SelectedIndex = _display;
             _displays.BackColor = Color.FromArgb(38, 49, 42);
             _displays.ForeColor = Color.FromArgb(237, 237, 237);
             _displays.Margin = new Padding(0, 4, 12, 0);
             _displays.SelectedIndexChanged += (_, _) => { _display = _displays.SelectedIndex; Request(); _canvas.Focus(); };
             bar.Controls.Add(_displays);
         }
-        bar.Controls.Add(BarButton("Enviar archivos…", (_, _) => PickFiles()));
-        bar.Controls.Add(BarButton("Enviar carpeta…", (_, _) => PickFolder()));
-        bar.Controls.Add(BarButton("Salir   Ctrl + Alt + Espacio", (_, _) => Close(), accent: true));
-        var hint = new Label { AutoSize = true, ForeColor = Color.FromArgb(179, 189, 183), Margin = new Padding(8, 9, 0, 0), Text = "También puedes soltar archivos o carpetas sobre la pantalla." };
+        if (!local)
+        {
+            bar.Controls.Add(BarButton("Enviar archivos…", (_, _) => PickFiles()));
+            bar.Controls.Add(BarButton("Enviar carpeta…", (_, _) => PickFolder()));
+        }
+        bar.Controls.Add(BarButton(local ? "Salir de pantalla completa" : "Salir   Ctrl + Alt + Espacio", (_, _) => Close(), accent: true));
+        var hint = new Label { AutoSize = true, ForeColor = Color.FromArgb(179, 189, 183), Margin = new Padding(8, 9, 0, 0), Text = local ? "Solo se ve: para trabajar en ella, usa su monitor." : "También puedes soltar archivos o carpetas sobre la pantalla." };
         bar.Controls.Add(hint);
 
-        Controls.Add(_canvas);
+        _canvas.Dock = DockStyle.Fill;
         Controls.Add(bar);
+        Controls.Add(_canvas);
+        bar.BringToFront();
+        _barTimer.Tick += (_, _) =>
+        {
+            var y = PointToClient(Cursor.Position).Y; var inside = ClientRectangle.Contains(PointToClient(Cursor.Position));
+            if (inside && y <= 3 && !bar.Visible) { bar.Visible = true; bar.BringToFront(); }
+            else if (bar.Visible && (!inside || y > bar.Height + 12) && !_displays.DroppedDown) bar.Visible = false;
+        };
+        _barTimer.Start();
+        // This window must never appear inside the live pictures of the room.
+        HandleCreated += (_, _) => TecLink.App.Native.Win32.SetWindowDisplayAffinity(Handle, TecLink.App.Native.Win32.WDA_EXCLUDEFROMCAPTURE);
 
         _canvas.Paint += OnPaint;
-        _canvas.MouseMove += (_, e) => { if (Map(e.Location, out var p)) _bridge.ViewerMove(p.X, p.Y); };
-        _canvas.MouseDown += (_, e) => Button(e, true);
-        _canvas.MouseUp += (_, e) => Button(e, false);
-        _canvas.MouseWheel += (_, e) => _bridge.ViewerWheel(e.Delta);
+        if (!local)
+        {
+            _canvas.MouseMove += (_, e) => { if (Map(e.Location, out var p)) _bridge.ViewerMove(p.X, p.Y); };
+            _canvas.MouseDown += (_, e) => Button(e, true);
+            _canvas.MouseUp += (_, e) => Button(e, false);
+            _canvas.MouseWheel += (_, e) => _bridge.ViewerWheel(e.Delta);
+        }
+        KeyPreview = true;
+        KeyDown += (_, e) => { if (local && e.KeyCode == Keys.Escape) Close(); };
         _canvas.DragEnter += (_, e) => e.Effect = e.Data?.GetDataPresent(DataFormats.FileDrop) == true ? DragDropEffects.Copy : DragDropEffects.None;
         _canvas.DragDrop += (_, e) => { if (e.Data?.GetData(DataFormats.FileDrop) is string[] paths) _ = _bridge.Files.SendAsync(paths); };
 
-        _bridge.ScreenFrameReceived += OnFrame;
-        _bridge.ViewerCloseRequested += OnCloseRequested;
-        Shown += (_, _) => { Request(); _bridge.SetViewInput(true); };
-        Activated += (_, _) => _bridge.SetViewInput(true);
-        Deactivate += (_, _) => _bridge.SetViewInput(false);
+        if (!local) { _bridge.ScreenFrameReceived += OnFrame; _bridge.ViewerCloseRequested += OnCloseRequested; }
+        Shown += (_, _) => { Request(); if (!local) _bridge.SetViewInput(true); _canvas.Focus(); };
+        if (!local) { Activated += (_, _) => _bridge.SetViewInput(true); Deactivate += (_, _) => _bridge.SetViewInput(false); }
+        // The stream is sized to the real monitor: if this window changes size, ask again so the picture stays sharp.
+        Resize += (_, _) => { if (IsHandleCreated && Visible) Request(); };
     }
 
     private Button BarButton(string text, EventHandler click, bool accent = false)
@@ -87,7 +117,11 @@ public sealed class RemoteScreenForm : Form
         return button;
     }
 
-    private void Request() => _bridge.StartViewing(_display, _canvas.ClientSize.Width, _canvas.ClientSize.Height);
+    private void Request()
+    {
+        if (!_local) { _bridge.StartViewing(_display, _canvas.ClientSize.Width, _canvas.ClientSize.Height); return; }
+        _localHost!.Start(_display, _canvas.ClientSize.Width, _canvas.ClientSize.Height, message => { OnFrame(message); return Task.CompletedTask; });
+    }
 
     private void PickFiles()
     {
@@ -112,8 +146,8 @@ public sealed class RemoteScreenForm : Form
             using var decoded = Image.FromStream(stream);
             bitmap = new Bitmap(decoded);
         }
-        catch (ArgumentException) { _bridge.AckFrame(); return; }
-        _bridge.AckFrame();
+        catch (ArgumentException) { AckFrame(); return; }
+        AckFrame();
         try
         {
             BeginInvoke(() =>
@@ -127,6 +161,8 @@ public sealed class RemoteScreenForm : Form
         }
         catch (InvalidOperationException) { bitmap.Dispose(); }
     }
+
+    private void AckFrame() { if (_local) _localHost?.Ack(); else _bridge.AckFrame(); }
 
     private Rectangle Picture()
     {
@@ -146,10 +182,10 @@ public sealed class RemoteScreenForm : Form
             return;
         }
         var picture = Picture();
-        e.Graphics.InterpolationMode = picture.Size == _frame.Size ? InterpolationMode.NearestNeighbor : InterpolationMode.Bilinear;
-        e.Graphics.PixelOffsetMode = PixelOffsetMode.Half;
+        e.Graphics.InterpolationMode = picture.Size == _frame.Size ? InterpolationMode.NearestNeighbor : InterpolationMode.HighQualityBicubic;
+        e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
         e.Graphics.DrawImage(_frame, picture);
-        _canvas.Cursor = _dot;
+        _canvas.Cursor = _local ? Cursors.Default : _dot;
     }
 
     private bool Map(Point local, out Point wire)
@@ -195,9 +231,14 @@ public sealed class RemoteScreenForm : Form
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
         _closed = true;
-        _bridge.ScreenFrameReceived -= OnFrame;
-        _bridge.ViewerCloseRequested -= OnCloseRequested;
-        _bridge.StopViewing();
+        _barTimer.Stop(); _barTimer.Dispose();
+        if (_local) _localHost?.Dispose();
+        else
+        {
+            _bridge.ScreenFrameReceived -= OnFrame;
+            _bridge.ViewerCloseRequested -= OnCloseRequested;
+            _bridge.StopViewing();
+        }
         _frame?.Dispose();
         _frame = null;
         base.OnFormClosed(e);
