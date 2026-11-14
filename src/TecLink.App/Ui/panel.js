@@ -117,11 +117,12 @@
     const host = state.role === 'Server', legacy = !host && !state.joinCode, on = state.powered !== false, max = state.maxScreens || 10;
     $('session-code').textContent = state.sessionCode || '——';
     $('host-card').classList.toggle('inactive', !host);
-    $('host-status').textContent = !host ? 'Estás unido a otra sesión. Sal de ella para invitar a alguien.' : state.connected ? `${state.remoteName || 'Otra PC'} está conectada a tu sesión.` : 'Esperando a que alguien se una con este código.';
-    $('join-card').classList.toggle('inactive', !host && legacy);
-    if (document.activeElement !== $('join-code') && !host) $('join-code').value = state.joinCode || '';
-    $('leave-btn').hidden = host; $('join-btn').hidden = !host;
-    $('join-btn').textContent = 'Unirme'; $('join-code').disabled = !host;
+    const guest = !host && !legacy;
+    $('host-status').textContent = legacy ? 'Ahora usas un enlace directo por IP. Pulsa «Abrir mi propia sesión» para invitar con código.' : guest ? 'Estás unido a otra sesión. Sal de ella para invitar a alguien.' : state.connected ? `${state.remoteName || 'Otra PC'} está conectada a tu sesión.` : 'Esperando a que alguien se una con este código.';
+    $('host-card').classList.toggle('inactive', !host);
+    if (document.activeElement !== $('join-code') && guest) $('join-code').value = state.joinCode || '';
+    $('leave-btn').hidden = host; $('leave-btn').textContent = legacy ? 'Abrir mi propia sesión' : 'Salir de la sesión';
+    $('join-btn').hidden = guest; $('join-code').disabled = guest;
     $('join-notice').textContent = state.joinNotice || (!host && !state.connected && state.joinCode ? 'Buscando la sesión en tu red…' : !host && state.connected ? `Conectado a la sesión de ${state.remoteName || 'la otra PC'}.` : '');
     const m = !!state.management, sw = $('management');
     sw.hidden = legacy; $('management-note').hidden = legacy;
