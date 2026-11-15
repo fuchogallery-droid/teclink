@@ -55,7 +55,7 @@
     $('notif-list').replaceChildren(...list);
     if (req && req.id !== lastRequest) { lastRequest = req.id; openNotif(true); }
   }
-  function openNotif(open) { $('notif-pop').hidden = !open; $('notif-open').setAttribute('aria-expanded', open); }
+  function openNotif(open) { if (open) $('dl-pop').hidden = true; $('notif-pop').hidden = !open; $('notif-open').setAttribute('aria-expanded', open); }
 
   // ---- Salas guardadas ----
   function renderRooms() {
@@ -81,16 +81,25 @@
   let updateUrl = '';
   function updateResult(m) {
     const note = $('update-note'); $('update-check').disabled = false; $('update-check').textContent = 'Buscar versión nueva';
-    if (!m.ok) { note.textContent = 'No se pudo consultar. Revisa tu conexión a internet e inténtalo de nuevo.'; return; }
-    $('update-current').textContent = 'Instalada: ' + m.current; updateUrl = m.url;
-    $('update-get').hidden = !m.newer;
-    note.textContent = m.newer ? `Hay una versión nueva: ${m.latest}. Descárgala e instálala encima; no pierdes tu configuración.` : 'Tienes la versión más reciente.';
+    $('dl-check').disabled = false; $('dl-check').textContent = 'Buscar versión nueva';
+    if (!m.ok) { const t = 'No se pudo consultar. Revisa tu conexión a internet e inténtalo de nuevo.'; note.textContent = t; $('dl-note').textContent = t; return; }
+    $('update-current').textContent = 'Instalada: ' + m.current; updateUrl = m.asset || m.url;
+    $('update-get').hidden = !m.newer; $('dl-get').hidden = !m.newer;
+    const text = m.newer ? `Hay una versión nueva: ${m.latest}. Pulsa «Descargar» e instálala encima; no pierdes tu configuración.` : `Tienes la versión más reciente (${m.current}).`;
+    note.textContent = text; $('dl-note').textContent = text;
   }
-
+  const copyLink = async () => { const url = state?.online?.downloadUrl || 'https://github.com/fuchogallery-droid/teclink/releases/latest'; try { await navigator.clipboard.writeText(url); api.toast('Enlace de descarga copiado.'); } catch { api.toast('Enlace: ' + url); } };
+  const openDl = open => { $('dl-pop').hidden = !open; $('dl-open').setAttribute('aria-expanded', open); if (open) { $('notif-pop').hidden = true; } };
+  const openUninstall = open => { $('uninstall').hidden = $('uninstall-scrim').hidden = !open; if (open) $('uninstall-no').focus(); };
   function init(options) {
     api = options;
     $('update-check').onclick = () => { $('update-check').disabled = true; $('update-check').textContent = 'Buscando…'; api.send({ type: 'checkUpdate' }); };
     $('update-get').onclick = () => api.send({ type: 'openUrl', url: updateUrl });
+    $('dl-open').onclick = () => openDl($('dl-pop').hidden); $('dl-close').onclick = () => openDl(false);
+    $('dl-check').onclick = () => { $('dl-check').disabled = true; $('dl-check').textContent = 'Buscando…'; api.send({ type: 'checkUpdate' }); };
+    $('dl-get').onclick = () => api.send({ type: 'openUrl', url: updateUrl }); $('dl-copy').onclick = copyLink;
+    $('uninstall-open').onclick = () => openUninstall(true); $('uninstall-no').onclick = () => openUninstall(false); $('uninstall-scrim').onclick = () => openUninstall(false);
+    $('uninstall-yes').onclick = () => { openUninstall(false); api.send({ type: 'uninstall' }); };
     $('share-clipboard').onclick = () => api.send({ type: 'setClipboard', on: $('share-clipboard').getAttribute('aria-checked') !== 'true' });
     $('profile-pick').onclick = () => $('profile-file').click();
     $('profile-file').onchange = e => { pickPhoto(e.target.files[0]); e.target.value = ''; };
@@ -100,7 +109,7 @@
     $('notif-open').onclick = () => openNotif($('notif-pop').hidden); $('notif-close').onclick = () => openNotif(false);
     $('save-room').onclick = () => api.send({ type: 'saveRoom' });
     $('rooms-check').onclick = () => { $('rooms-check').disabled = true; $('rooms-check').textContent = 'Buscando…'; api.send({ type: 'checkRooms' }); };
-    addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (!$('profile').hidden) openProfile(false); else if (!$('notif-pop').hidden) openNotif(false); });
+    addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (!$('uninstall').hidden) openUninstall(false); else if (!$('dl-pop').hidden) openDl(false); else if (!$('profile').hidden) openProfile(false); else if (!$('notif-pop').hidden) openNotif(false); });
   }
   function render(newState) {
     state = newState; renderNotifications(); renderRooms();

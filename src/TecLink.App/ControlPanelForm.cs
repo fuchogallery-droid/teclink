@@ -13,6 +13,7 @@ public sealed class ControlPanelForm : Form
     private readonly EdgeBridge _bridge;
     private readonly Func<string> _status;
     private readonly Action _openViewer;
+    private readonly Func<bool> _uninstall;
     private bool _ready;
     private bool _shutdown;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
@@ -42,8 +43,9 @@ public sealed class ControlPanelForm : Form
     private readonly Action _controlOffHandler;
     private bool _tileControl;
 
-    public ControlPanelForm(EdgeBridge bridge, Func<string> status, Action openViewer, Action<bool> setPower, Action<string, string?, string?> session, Action<bool, string?> fullScreen)
+    public ControlPanelForm(EdgeBridge bridge, Func<string> status, Action openViewer, Action<bool> setPower, Action<string, string?, string?> session, Action<bool, string?> fullScreen, Func<bool> uninstall)
     {
+        _uninstall = uninstall;
         _bridge = bridge; _status = status; _openViewer = openViewer; _setPower = setPower; _session = session; _fullScreen = fullScreen;
         Text = $"TecLink {AppInfo.VersionText} — pantallas y salidas";
         Icon = TrayAppContext.AppIcon;
@@ -230,12 +232,17 @@ public sealed class ControlPanelForm : Form
                             var page = doc.RootElement.GetProperty("html_url").GetString() ?? "";
                             var current = typeof(ControlPanelForm).Assembly.GetName().Version ?? new Version(0, 0);
                             var newer = Version.TryParse(tag.TrimStart('v'), out var latest) && latest > new Version(current.Major, current.Minor, Math.Max(0, current.Build));
-                            result = new { type = "update", ok = true, newer, latest = tag.TrimStart('v'), current = $"{current.Major}.{current.Minor}.{Math.Max(0, current.Build)}", url = page };
+                            var asset = doc.RootElement.TryGetProperty("assets", out var assets) ? assets.EnumerateArray().Select(x => x.GetProperty("browser_download_url").GetString() ?? "").FirstOrDefault(u => u.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) ?? "" : "";
+                            result = new { type = "update", ok = true, newer, latest = tag.TrimStart('v'), current = $"{current.Major}.{current.Minor}.{Math.Max(0, current.Build)}", url = page, asset };
                         }
                         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException or KeyNotFoundException)
                         { result = new { type = "update", ok = false }; }
                         if (!IsDisposed && IsHandleCreated) BeginInvoke(() => Post(result));
                     });
+                    break;
+                case "uninstall":
+                    // The uninstaller of Windows asks once more by itself; TecLink only closes after launching it.
+                    if (!_uninstall()) Post(new { type = "toast", message = "TecLink no se instaló con el instalador, así que aquí no hay desinstalador. Si lo quieres quitar, hazlo desde Configuración de Windows → Aplicaciones." });
                     break;
                 case "openUrl":
                     var wanted = root.GetProperty("url").GetString() ?? "";
