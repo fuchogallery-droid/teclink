@@ -402,7 +402,7 @@ body.cinema .chat-tools #tool-mouse{grid-column:span 2}body.cinema .chat-tools #
 
 /* ===== 0.9.6: rediseno de Pantallas, Sala, Conectar, menus y pie ===== */
 :root{--credits-h:44px}
-.credits{flex:none;display:flex;align-items:center;justify-content:center;gap:16px;flex-wrap:wrap;min-height:var(--credits-h);padding:6px 16px;background:var(--accent);color:var(--bg);font-size:13px;font-weight:600;text-align:center;letter-spacing:.2px}
+.credits{flex:none;display:flex;align-items:center;justify-content:center;min-height:var(--credits-h);padding:4px 16px;background:transparent;color:var(--muted,var(--text));font-size:12px;text-align:center}
 .credits-btn{min-height:30px;padding:0 14px;border-radius:999px;border:2px solid var(--bg);background:var(--bg);color:var(--text);font-size:13px;font-weight:700;box-shadow:none}
 .credits-btn:hover{filter:brightness(1.2)}
 body.cinema .credits{display:none}
@@ -483,3 +483,6 @@ body.cinema #chat-bubble{bottom:14px!important}
 #peer-tab #dropzone svg{width:46px;height:46px}
 .received{display:flex;justify-content:center}
 #control-ask[hidden],#who-ask[hidden]{display:none}
+
+/* 0.9.7: se quita la invitacion en linea; queda el codigo simple */
+#online-card,#online-switch,.relay-more,#online-chip{display:none!important}

@@ -428,7 +428,7 @@
   }
   const answerWho = mine => { $('who-ask').hidden = $('control-scrim').hidden = true; send({ type: 'peerIsMine', mine }); if (!mine) localStorage.setItem('tecWhoOther', JSON.stringify([...new Set([...whoOthers(), whoAsked])].slice(-30))); toast(mine ? 'Listo: esa PC entra siempre en «Mis computadoras».' : 'Listo: controlar su PC pedirá su permiso.'); };
   $('who-mine').onclick = () => answerWho(true); $('who-other').onclick = () => answerWho(false);
-  $('credits-site').onclick = () => send({ type: 'openUrl', url: 'https://technocrazy.org' });  const answerControl = accept => { send({ type: 'controlAnswer', accept }); $('control-ask').hidden = $('control-scrim').hidden = true; toast(accept ? 'Permitiste el control. Pulsa «Detener control» cuando quieras.' : 'No se permitió el control.'); };
+    const answerControl = accept => { send({ type: 'controlAnswer', accept }); $('control-ask').hidden = $('control-scrim').hidden = true; toast(accept ? 'Permitiste el control. Pulsa «Detener control» cuando quieras.' : 'No se permitió el control.'); };
   $('control-yes').onclick = () => answerControl(true); $('control-no').onclick = () => answerControl(false);
   TecChat.init({ send, toast, controlPc, onOpen: open => { TecRoom.setDocked(open); if (open) openTab('room'); else if (state) update(); } });
   TecSocial.init({ send, toast });
