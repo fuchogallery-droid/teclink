@@ -3,10 +3,10 @@ namespace TecLink.App;
 internal static class Logger
 {
     private static readonly string LogPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TecLink", "error.log");
+        Environment.GetEnvironmentVariable("TECLINK_LOGS") ?? Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TecLink", "error.log");
 
     private static readonly string InfoPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TecLink", "connection.log");
+        Environment.GetEnvironmentVariable("TECLINK_LOGS") ?? Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TecLink", "connection.log");
     private static readonly object InfoLock = new();
 
     /// <summary>One line per connection event (who joined, why a link dropped…), kept small.</summary>

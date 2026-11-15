@@ -158,19 +158,24 @@
     if (!spk.ctx) { spk.ctx = new AudioContext(); spk.gain = spk.ctx.createGain(); spk.gain.gain.value = spk.volume; spk.gain.connect(spk.ctx.destination); }
     if (spk.ctx.state === 'suspended') spk.ctx.resume().catch(() => {});
   }
-  function voice(b64) {
+  // Cada persona tiene su propio reloj de reproduccion: dos voces a la vez se mezclan en lugar de ponerse en fila.
+  const talk = {};
+  function voice(b64, id) {
     if (!b64) return; ensurePlayback();
+    const who = talk[id || 'host'] ??= { next: 0, last: 0 };
     const bin = atob(b64), n = bin.length >> 1; if (!n) return;
     const buf = spk.ctx.createBuffer(1, n, RATE), ch = buf.getChannelData(0);
     for (let i = 0; i < n; i++) { const v = bin.charCodeAt(2 * i) | (bin.charCodeAt(2 * i + 1) << 8); ch[i] = (v << 16 >> 16) / 32768; }
     const src = spk.ctx.createBufferSource(); src.buffer = buf; src.connect(spk.gain);
-    const now = spk.ctx.currentTime; if (spk.next < now + 0.02 || spk.next > now + 0.6) spk.next = now + 0.08;
-    src.start(spk.next); spk.next += buf.duration; spk.last = Date.now(); people();
+    const now = spk.ctx.currentTime; if (who.next < now + 0.02 || who.next > now + 0.6) who.next = now + 0.08;
+    src.start(who.next); who.next += buf.duration; who.last = Date.now(); spk.last = who.last; people();
   }
   function people() {
-    const names = [state?.machineName ? state.machineName + ' (tú)' : 'Tú']; if (state?.connected) names.push((state.remoteName || 'Otra PC') + (Date.now() - spk.last < 700 ? ' · hablando' : ''));
-    el['chat-people'].textContent = state?.connected ? names.join(' · ') : 'Nadie más conectado todavía'; el['chat-send'].disabled = !state?.connected;
-    // Control del mouse y envio de archivos: los mismos botones de la sala, aqui a mano.
+    const others = (state?.members || []).filter(m => !m.me && m.connected);
+    const names = [state?.machineName ? state.machineName + ' (tú)' : 'Tú'];
+    if (others.length) others.forEach(m => names.push(m.name + (Date.now() - (talk[m.id]?.last || 0) < 700 ? ' · hablando' : '')));
+    else if (state?.connected) names.push((state.remoteName || 'Otra PC') + (Date.now() - spk.last < 700 ? ' · hablando' : ''));
+    el['chat-people'].textContent = state?.connected ? names.join(' · ') : 'Nadie más conectado todavía'; el['chat-send'].disabled = !state?.connected;    // Control del mouse y envio de archivos: los mismos botones de la sala, aqui a mano.
     const m = el['tool-mouse'], label = m.querySelector('span'), name = state?.remoteName || 'la otra PC', mode = state?.mode;
     label.textContent = mode === 'remote' ? 'Volver a mi PC' : mode === 'peer' ? 'Recuperar mi mouse' : 'Controlar a ' + name;
     m.classList.toggle('on', mode === 'remote'); m.disabled = !state?.connected || (mode === 'local' && state.sessionMode && !state.management);

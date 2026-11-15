@@ -38,19 +38,19 @@
   // ---- Notificaciones ----
   function renderNotifications() {
     const n = state.notifications || {}, req = n.request, recent = n.recent || [];
-    $('notif-badge').hidden = !req; $('notif-badge').textContent = req ? '1' : '0'; $('notif-open').classList.toggle('ring', !!req);
+    const waiting = (n.requests && n.requests.length) || (req ? 1 : 0);
+    $('notif-badge').hidden = !waiting; $('notif-badge').textContent = String(waiting); $('notif-open').classList.toggle('ring', !!waiting);
     const key = JSON.stringify(n); if (key === sig) return; sig = key;
     const list = [];
-    if (req) {
+    for (const r of (n.requests && n.requests.length ? n.requests : req ? [req] : [])) {
       const box = document.createElement('div'); box.className = 'notif-item request';
-      box.innerHTML = '<strong></strong><span class="notif-empty">Quiere volver a entrar a tu sala. Tú decides.</span><div class="file-actions"><button class="primary" type="button">Aceptar</button><button class="secondary" type="button">Rechazar</button></div>';
-      box.querySelector('strong').textContent = `${req.name} pide entrar a tu sala`;
+      box.innerHTML = '<strong></strong><span class="notif-empty">Quiere entrar a tu sala. Tú decides.</span><div class="file-actions"><button class="primary" type="button">Aceptar</button><button class="secondary" type="button">Rechazar</button></div>';
+      box.querySelector('strong').textContent = `${r.name} pide entrar a tu sala`;
       const [yes, no] = box.querySelectorAll('button');
-      yes.onclick = () => { api.send({ type: 'joinAnswer', id: req.id, accept: true }); };
-      no.onclick = () => { api.send({ type: 'joinAnswer', id: req.id, accept: false }); };
+      yes.onclick = () => { api.send({ type: 'joinAnswer', id: r.id, accept: true }); };
+      no.onclick = () => { api.send({ type: 'joinAnswer', id: r.id, accept: false }); };
       list.push(box);
-    }
-    for (const e of recent) { const box = document.createElement('div'); box.className = 'notif-item'; box.innerHTML = '<span></span><time></time>'; box.firstChild.textContent = e.text; box.lastChild.textContent = ago(e.at); list.push(box); }
+    }    for (const e of recent) { const box = document.createElement('div'); box.className = 'notif-item'; box.innerHTML = '<span></span><time></time>'; box.firstChild.textContent = e.text; box.lastChild.textContent = ago(e.at); list.push(box); }
     if (!list.length) { const p = document.createElement('p'); p.className = 'notif-empty'; p.textContent = 'No tienes notificaciones. Aquí te llegan las solicitudes de quienes quieran volver a entrar a tu sala.'; list.push(p); }
     $('notif-list').replaceChildren(...list);
     if (req && req.id !== lastRequest) { lastRequest = req.id; openNotif(true); }

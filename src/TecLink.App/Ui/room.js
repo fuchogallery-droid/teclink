@@ -7,19 +7,21 @@
   const MIN = { card: [220, 150], bubble: [90, 90] };
   let api = {}, state, store = readStore(), top = 10, signature = '', camSignature = '', active = false, docked = false, full = null, control = null, floated = { me: false, peer: false }, lastWatch = '', lastMove = 0;
   const cam = { on: false, cutout: true, mirror: true, stream: null, seg: null, segLoading: null, lastSent: 0, loop: 0 };
-  const peer = { last: 0, cutout: false, url: '' };
+  const peers = {}; // una camara por persona de la sala: id -> { last, cutout, url, img }
+  const peerOf = id => peers[id] ??= { last: 0, cutout: false, url: '', img: Object.assign(new Image(), { className: 'bubble-canvas' }) };
   const pictures = {}; // key -> object URL of the latest live picture
   const video = document.createElement('video'); video.muted = true; video.playsInline = true;
   const cut = document.createElement('canvas'), cutx = cut.getContext('2d'), out = document.createElement('canvas'), outx = out.getContext('2d');
   const own = document.createElement('canvas'); // lo que ve el usuario en su burbuja
-  const peerImg = new Image();
 
   function readStore() { try { const s = JSON.parse(localStorage.getItem('tecRoom2') || '{}'); return { items: s.items || {}, locked: !!s.locked, cols: s.cols || 0 }; } catch { return { items: {}, locked: false, cols: 0 }; } }
   const save = () => localStorage.setItem('tecRoom2', JSON.stringify(store));
   const layout = () => store.items;
   const room = () => $('room');
   const msg = text => { document.querySelectorAll('[data-cam-msg]').forEach(n => n.textContent = text || ''); };
-  const peerCamShown = () => !!peer.url && Date.now() - peer.last < 4000;
+  const peerCamShown = id => { const p = peers[id]; return !!p && !!p.url && Date.now() - p.last < 4000; };
+  const nameOf = id => (state?.members || []).find(m => m.id === id)?.name || state?.remoteName || 'Otra PC';
+  const remoteMembers = () => (state?.members || []).filter(m => !m.me && m.connected);
   const canSee = () => !!state && state.connected && state.extras && (state.management || !state.sessionMode);
 
   function screens() {
@@ -35,7 +37,7 @@
   function items() {
     const list = screens().filter(i => !layout()[i.key]?.hidden);
     if ((!docked || floated.me) && cam.on) list.push({ key: 'cam:me', kind: 'bubble', mine: true });
-    if ((!docked || floated.peer) && peerCamShown()) list.push({ key: 'cam:peer', kind: 'bubble', mine: false });
+    for (const id of Object.keys(peers)) if ((!docked || floated[id]) && peerCamShown(id)) list.push({ key: 'cam:' + id, kind: 'bubble', mine: false, who: id });
     return list;
   }
 
@@ -103,12 +105,12 @@
       if (pictures[item.key]) { const img = node.querySelector('.rc-img'); img.src = pictures[item.key]; img.hidden = false; }
     } else {
       node.innerHTML = '<div class="bubble-media"></div><div class="bubble-bar"><span class="bubble-name"></span><button class="b-minus secondary" type="button" aria-label="Más pequeña">−</button><button class="b-plus secondary" type="button" aria-label="Más grande">+</button>' + '<button class="b-dock secondary" type="button" aria-label="Volver al panel" title="Volver al panel del chat">⇲</button>' + (item.mine ? '<button class="b-off secondary" type="button" aria-label="Apagar cámara">✕</button>' : '') + '</div>';
-      mountMedia(node.querySelector('.bubble-media'), item.mine);
+      mountMedia(node.querySelector('.bubble-media'), item.mine, item.who);
       node.onpointerdown = e => { if (!e.target.closest('button,.rc-resize')) startDrag(e, node, item.key, 'move'); };
       node.querySelector('.b-minus').onclick = () => scaleBubble(item.key, node, .85);
       node.querySelector('.b-plus').onclick = () => scaleBubble(item.key, node, 1.18);
       node.querySelector('.b-off')?.addEventListener('click', () => setCamera(false));
-      node.querySelector('.b-dock').onclick = () => setFloat(item.mine ? 'me' : 'peer', false);
+      node.querySelector('.b-dock').onclick = () => setFloat(item.mine ? 'me' : item.who, false);
       node.addEventListener('wheel', e => { e.preventDefault(); scaleBubble(item.key, node, e.deltaY < 0 ? 1.08 : .92); }, { passive: false });
     }
     const handle = document.createElement('div'); handle.className = 'rc-resize'; handle.setAttribute('role', 'separator'); handle.setAttribute('aria-label', 'Cambiar tamaño');
@@ -123,9 +125,9 @@
     });
     return node;
   }
-  function mountMedia(media, mine) {
+  function mountMedia(media, mine, id) {
     if (mine) { own.className = 'bubble-canvas'; video.className = 'bubble-video'; media.append(video, own); if (cam.on) video.play().catch(() => {}); }
-    else { peerImg.className = 'bubble-canvas'; media.append(peerImg); }
+    else media.append(peerOf(id).img);
   }
 
   function action(item, act) {
@@ -215,9 +217,9 @@
         b('remove').hidden = !(item.remote && admin); b('remove').disabled = item.offline;
         b('hide').hidden = controlling;
       } else {
-        node.setAttribute('aria-label', item.mine ? 'Tu cámara' : 'Cámara de ' + (state.remoteName || 'la otra PC'));
-        node.querySelector('.bubble-name').textContent = item.mine ? 'Tú' : state.remoteName || 'Otra PC';
-        node.classList.toggle('cutout', item.mine ? cam.cutout : peer.cutout); node.classList.toggle('mirror', item.mine && cam.mirror);
+        node.setAttribute('aria-label', item.mine ? 'Tu cámara' : 'Cámara de ' + nameOf(item.who));
+        node.querySelector('.bubble-name').textContent = item.mine ? 'Tú' : nameOf(item.who);
+        node.classList.toggle('cutout', item.mine ? cam.cutout : peerOf(item.who).cutout); node.classList.toggle('mirror', item.mine && cam.mirror);
       }
     }
     for (const item of list) {
@@ -232,7 +234,7 @@
   // Camaras dentro del chat acoplado: una celda por persona, siempre visibles.
   function renderCams() {
     const host = $('chat-cams'); if (!host) return;
-    const people = docked ? [{ who: 'me', name: 'Tú', on: cam.on }].concat(state.connected ? [{ who: 'peer', name: state.remoteName || 'Otra PC', on: peerCamShown() }] : []) : [];
+    const people = docked ? [{ who: 'me', name: 'Tú', on: cam.on }].concat(remoteMembers().map(m => ({ who: m.id, name: m.name, on: peerCamShown(m.id) }))) : [];
     const sig = people.map(p => p.who + p.on + !!floated[p.who]).join('|');
     if (sig !== camSignature) {
       camSignature = sig; host.replaceChildren(); host.style.setProperty('--cams', Math.max(1, people.length));
@@ -242,15 +244,15 @@
         const btn = cell.querySelector('.cam-float'), isFloating = !!floated[p.who] && p.on;
         btn.hidden = !p.on; btn.textContent = isFloating ? '⇲' : '⇱'; btn.title = isFloating ? 'Volver al panel' : 'Sacar la cámara a una ventana flotante'; btn.setAttribute('aria-label', btn.title);
         btn.onclick = () => setFloat(p.who, !isFloating);
-        if (p.on && !isFloating) mountMedia(cell.querySelector('.cam-media'), p.who === 'me');
+        if (p.on && !isFloating) mountMedia(cell.querySelector('.cam-media'), p.who === 'me', p.who);
         else { const off = document.createElement('span'); off.className = 'cam-off'; off.textContent = isFloating ? 'Flotando' : (p.name === 'Tú' ? state.machineName || 'Tú' : p.name).slice(0, 2).toUpperCase(); cell.querySelector('.cam-media').append(off); }
         host.append(cell);
       }
     }
     for (const p of people) {
-      const cell = host.querySelector(`[data-who=${p.who}]`); if (!cell) continue;
+      const cell = [...host.children].find(c => c.dataset.who === p.who); if (!cell) continue;
       cell.querySelector('.cam-name').textContent = p.name + (p.on ? '' : ' · cámara apagada');
-      cell.classList.toggle('cutout', p.who === 'me' ? cam.cutout && !!cam.seg : peer.cutout); cell.classList.toggle('mirror', p.who === 'me' && cam.mirror);
+      cell.classList.toggle('cutout', p.who === 'me' ? cam.cutout && !!cam.seg : peerOf(p.who).cutout); cell.classList.toggle('mirror', p.who === 'me' && cam.mirror);
     }
   }
 
@@ -371,16 +373,16 @@
       reader.readAsDataURL(new Blob([new Uint8Array([useCut ? 1 : 0]), blob]));
     }, 'image/webp', 0.7);
   }
-  function peerFrame(b64) {
-    if (!b64) { peer.last = 0; refresh(); return; }
+  function peerFrame(b64, id) {
+    const p = peerOf(id || 'host');
+    if (!b64) { p.last = 0; refresh(); return; }
     const bin = atob(b64), bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
     if (bytes.length < 2) return;
     const url = URL.createObjectURL(new Blob([bytes.subarray(1)], { type: 'image/webp' }));
-    const old = peer.url, wasShown = peerCamShown(), wasCut = peer.cutout; peerImg.src = url; peer.url = url; peer.cutout = bytes[0] === 1; peer.last = Date.now(); if (old) URL.revokeObjectURL(old);
-    if (!wasShown || wasCut !== peer.cutout) render();
+    const key = id || 'host', old = p.url, wasShown = peerCamShown(key), wasCut = p.cutout; p.img.src = url; p.url = url; p.cutout = bytes[0] === 1; p.last = Date.now(); if (old) URL.revokeObjectURL(old);
+    if (!wasShown || wasCut !== p.cutout) render();
   }
-  setInterval(() => { if (state && peer.last && !peerCamShown() && (signature.includes('cam:peer') || camSignature.includes('peertrue'))) render(); }, 1500);
-
+  setInterval(() => { if (state && Object.entries(peers).some(([id, p]) => p.last && !peerCamShown(id) && (signature.includes('cam:' + id) || camSignature.includes(id + 'true')))) render(); }, 1500);
   function init(options) {
     api = options;
     $('cam-toggle').onclick = () => setCamera(!cam.on);

@@ -9,11 +9,8 @@ namespace TecLink.App;
 public sealed partial class EdgeBridge
 {
     private const char Sep = '\u001f';
-    private string? _remoteProfileName, _remotePc, _remoteAvatar;
     private bool _askedToJoin;                 // guest: this link was made as a request, not with a fresh invitation
     private bool _nextJoinAsk;                 // guest: the next JoinSession is a request
-    private sealed record JoinRequest(string Id, string Name, long At, PeerConnection Connection);
-    private JoinRequest? _joinRequest;         // host: somebody is waiting for an answer
     private readonly List<(string Text, long At)> _events = new();
 
     /// <summary>The name this person chose (or, failing that, the computer's name).</summary>
@@ -33,45 +30,56 @@ public sealed partial class EdgeBridge
         if (avatar is not null)
             _config.Avatar = avatar.Length == 0 ? "" : avatar.StartsWith("data:image/jpeg;base64,", StringComparison.Ordinal) && avatar.Length <= 60_000 ? avatar : _config.Avatar;
         try { _config.Save(); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Logger.LogError(ex); }
-        SendProfile();
-        if (renamed && _connection is { } conn && _remoteKnown) _ = SendDesktopAsync(conn);
+        SendProfileToRoom();
+        if (renamed) foreach (var c in RoomConnections()) _ = SendDesktopAsync(c);
         StatusChanged?.Invoke("Perfil guardado en esta PC.");
     }
 
-    private void SendProfile()
+    private string ProfileJson() => JsonSerializer.Serialize(new { name = OwnName, pc = _config.MachineName, avatar = _config.Avatar });
+
+    private void SendProfile() { if (_connection is { } conn) SendProfileTo(conn); }
+    private void SendProfileTo(PeerConnection conn) => _ = conn.SendAsync(WireMessage.ProfileMsg(ProfileJson()));
+
+    /// <summary>My profile changed: every PC in the room gets it (a guest only talks to the owner, who tells the rest).</summary>
+    private void SendProfileToRoom()
     {
-        if (_connection is not { } conn) return;
-        var json = JsonSerializer.Serialize(new { name = OwnName, pc = _config.MachineName, avatar = _config.Avatar });
-        _ = conn.SendAsync(WireMessage.ProfileMsg(json));
+        foreach (var c in RoomConnections()) SendProfileTo(c);
+        if (_config.Role == PeerRole.Server) BroadcastRoster();
     }
 
     private void HandleProfile(string? json)
+    {
+        if (Cur is not { } slot) return;
+        HandleProfileFor(slot, json);
+        StatusChanged?.Invoke($"{slot.Name} actualizó su perfil.");
+    }
+
+    private void HandleProfileFor(PeerSlot slot, string? json)
     {
         try
         {
             using var doc = JsonDocument.Parse(json ?? "{}");
             var root = doc.RootElement;
             var name = Clean(root.TryGetProperty("name", out var n) ? n.GetString() : null, 32);
-            _remoteProfileName = name.Length > 0 ? name : null;
-            _remotePc = Clean(root.TryGetProperty("pc", out var p) ? p.GetString() : null, 32);
+            slot.ProfileName = name.Length > 0 ? name : null;
+            slot.Pc = Clean(root.TryGetProperty("pc", out var p) ? p.GetString() : null, 32);
             var avatar = root.TryGetProperty("avatar", out var a) ? a.GetString() ?? "" : "";
-            _remoteAvatar = avatar.StartsWith("data:image/jpeg;base64,", StringComparison.Ordinal) && avatar.Length <= 60_000 ? avatar : null;
-            if (_remoteProfileName is not null) _remoteName = _remoteProfileName;
-            StatusChanged?.Invoke($"{_remoteName} actualizó su perfil.");
+            slot.Avatar = avatar.StartsWith("data:image/jpeg;base64,", StringComparison.Ordinal) && avatar.Length <= 60_000 ? avatar : null;
+            if (slot.ProfileName is not null) slot.Name = slot.ProfileName;
         }
         catch (JsonException) { }
     }
 
     private void ResetRemoteProfile() { _remoteProfileName = null; _remotePc = null; _remoteAvatar = null; }
 
-    // ---- Join requests (host side) ----
-    private void RequestJoin(PeerConnection conn, string name)
+    // ---- Join requests (host side): each waiting guest has its own ----
+    private void RequestJoin(PeerSlot slot, string name)
     {
         var who = Clean(name, 32);
         if (who.Length == 0) who = "Alguien";
-        var request = new JoinRequest(Guid.NewGuid().ToString("N"), who, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), conn);
-        _joinRequest = request;
-        _ = conn.SendAsync(WireMessage.JoinResult(false, "wait:Esperando a que " + (string.IsNullOrWhiteSpace(_config.DisplayName) ? "el dueño de la sala" : _config.DisplayName) + " acepte tu solicitud..."));
+        slot.Request = new JoinRequest(Guid.NewGuid().ToString("N"), who, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        if (slot.Connection is { } conn)
+            _ = conn.SendAsync(WireMessage.JoinResult(false, "wait:Esperando a que " + (string.IsNullOrWhiteSpace(_config.DisplayName) ? "el dueño de la sala" : _config.DisplayName) + " acepte tu solicitud..."));
         AddEvent($"{who} pidió entrar a tu sala.");
         ControlChanged?.Invoke($"{who} pide entrar a tu sala");
         Notice?.Invoke($"{who} pide entrar a tu sala. Revisa las notificaciones.");
@@ -80,11 +88,12 @@ public sealed partial class EdgeBridge
 
     public void AnswerJoin(string id, bool accept)
     {
-        if (_joinRequest is not { } request || request.Id != id) return;
-        _joinRequest = null;
-        if (_connection != request.Connection) { AddEvent($"{request.Name} ya no estaba esperando."); StatusChanged?.Invoke("Esa solicitud ya no está activa."); return; }
-        if (accept) { AddEvent($"Aceptaste a {request.Name}."); AcceptJoin(request.Connection); }
-        else { AddEvent($"Rechazaste a {request.Name}."); Reject("El dueño de la sala no aceptó tu solicitud."); }
+        var slot = SlotsSnapshot().FirstOrDefault(s => s.Request?.Id == id);
+        if (slot?.Request is not { } request) { StatusChanged?.Invoke("Esa solicitud ya no está activa."); return; }
+        slot.Request = null;
+        if (slot.Connection is null) { AddEvent($"{request.Name} ya no estaba esperando."); StatusChanged?.Invoke("Esa solicitud ya no está activa."); return; }
+        if (accept) { AddEvent($"Aceptaste a {request.Name}."); AcceptJoin(slot); }
+        else { AddEvent($"Rechazaste a {request.Name}."); Reject(slot, "El dueño de la sala no aceptó tu solicitud."); }
     }
 
     private void AddEvent(string text)
@@ -95,9 +104,9 @@ public sealed partial class EdgeBridge
     public object NotificationsView()
     {
         object[] recent; lock (_events) recent = _events.Select(e => (object)new { text = e.Text, at = e.At }).ToArray();
-        return new { request = _joinRequest is { } r ? new { id = r.Id, name = r.Name, at = r.At } : null, recent };
+        var requests = SlotsSnapshot().Where(s => s.Request is not null).Select(s => (object)new { id = s.Request!.Id, name = s.Request.Name, at = s.Request.At }).ToArray();
+        return new { request = requests.Length > 0 ? requests[0] : null, requests, recent };
     }
-
     // ---- Saved rooms (guest side) ----
     public bool CanSaveRoom => _config.Role == PeerRole.Client && !string.IsNullOrEmpty(_config.JoinCode) && _connection is not null && _remoteKnown && _sessionMode;
 

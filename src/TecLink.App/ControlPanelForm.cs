@@ -31,10 +31,11 @@ public sealed class ControlPanelForm : Form
     private readonly Action<bool> _setPower;
     private readonly Action<bool, string?> _fullScreen;
     private readonly Action<string, string?, string?> _session;
-    private readonly Action<byte[]> _cameraHandler;
+    private readonly Action<string, byte[]> _cameraHandler;
     private readonly Action<string> _peerFilesHandler;
     private readonly Action<string, string> _chatHandler;
-    private readonly Action<byte[]> _voiceHandler;
+    private readonly Action<string, byte[]> _voiceHandler;
+    private readonly Action _roomHandler;
     private readonly Action<bool, string, byte[]> _tileHandler;
     private readonly Action<string, string> _removalHandler;
     private readonly Action<string> _noticeHandler;
@@ -50,13 +51,15 @@ public sealed class ControlPanelForm : Form
         MinimumSize = new Size(370, 600);
         StartPosition = FormStartPosition.CenterScreen;
         Controls.Add(_web);
-        _cameraHandler = frame => { if (!IsDisposed && IsHandleCreated) BeginInvoke(() => Post(new { type = "cameraFrame", data = Convert.ToBase64String(frame) })); };
+        _cameraHandler = (id, frame) => { if (!IsDisposed && IsHandleCreated) BeginInvoke(() => Post(new { type = "cameraFrame", id, data = Convert.ToBase64String(frame) })); };
         bridge.CameraFrameReceived += _cameraHandler;
         _peerFilesHandler = json => { if (!IsDisposed && IsHandleCreated) BeginInvoke(() => { try { Post(new { type = "peerFiles", items = JsonDocument.Parse(json).RootElement.Clone() }); } catch (JsonException) { } }); };
         bridge.PeerFilesReceived += _peerFilesHandler;
         _chatHandler = (from, text) => { if (!IsDisposed && IsHandleCreated) BeginInvoke(() => Post(new { type = "chat", from, text, at = DateTimeOffset.UtcNow.ToUnixTimeSeconds() })); };
-        _voiceHandler = pcm => { if (!IsDisposed && IsHandleCreated) BeginInvoke(() => Post(new { type = "voice", data = Convert.ToBase64String(pcm) })); };
+        _voiceHandler = (id, pcm) => { if (!IsDisposed && IsHandleCreated) BeginInvoke(() => Post(new { type = "voice", id, data = Convert.ToBase64String(pcm) })); };
         bridge.ChatReceived += _chatHandler; bridge.VoiceReceived += _voiceHandler;
+        _roomHandler = () => { if (!IsDisposed && IsHandleCreated) BeginInvoke(RefreshState); };
+        bridge.RoomChanged += _roomHandler;
         _tileHandler = (remote, id, jpeg) => { if (!IsDisposed && IsHandleCreated) BeginInvoke(() => Post(new { type = "tile", remote, id, data = Convert.ToBase64String(jpeg) })); };
         _removalHandler = (id, label) => { if (!IsDisposed && IsHandleCreated) BeginInvoke(() => { Post(new { type = "removeAsk", id, label, from = _bridge.RemoteName }); Show(); Activate(); }); };
         _noticeHandler = text => { if (!IsDisposed && IsHandleCreated) BeginInvoke(() => { Post(new { type = "toast", message = text }); RefreshState(); }); };
@@ -224,6 +227,8 @@ public sealed class ControlPanelForm : Form
                     if (wanted.StartsWith("https://github.com/fuchogallery-droid/teclink/releases", StringComparison.Ordinal))
                         System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(wanted) { UseShellExecute = true });
                     break;
+                case "useMouse": _bridge.UseMouseWith(root.GetProperty("id").GetString() ?? ""); break;
+                case "kickGuest": _bridge.KickGuest(root.GetProperty("id").GetString() ?? ""); break;
                 case "roomFullscreen": SetRoomFullscreen(root.GetProperty("on").GetBoolean()); break;
                 case "setProfile":
                     _bridge.SetProfile(root.TryGetProperty("name", out var pName) ? pName.GetString() : null, root.TryGetProperty("pc", out var pPc) ? pPc.GetString() : null,
@@ -312,5 +317,5 @@ public sealed class ControlPanelForm : Form
     }
 
     public void RefreshState() => Post(new { type = "state", state = _bridge.ViewState(_status()) });
-    public void Shutdown() { _bridge.TileReceived -= _tileHandler; _bridge.RemovalAsked -= _removalHandler; _bridge.Notice -= _noticeHandler; _bridge.ViewerCloseRequested -= _controlOffHandler; _bridge.WatchScreens(false, 0);_bridge.CameraFrameReceived -= _cameraHandler; _bridge.PeerFilesReceived -= _peerFilesHandler; _bridge.ChatReceived -= _chatHandler; _bridge.VoiceReceived -= _voiceHandler; _shutdown = true; Close(); Dispose(); }
+    public void Shutdown() { _bridge.TileReceived -= _tileHandler; _bridge.RemovalAsked -= _removalHandler; _bridge.Notice -= _noticeHandler; _bridge.ViewerCloseRequested -= _controlOffHandler; _bridge.WatchScreens(false, 0);_bridge.CameraFrameReceived -= _cameraHandler; _bridge.PeerFilesReceived -= _peerFilesHandler; _bridge.ChatReceived -= _chatHandler; _bridge.VoiceReceived -= _voiceHandler; _bridge.RoomChanged -= _roomHandler; _shutdown = true; Close(); Dispose(); }
 }

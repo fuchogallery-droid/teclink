@@ -14,7 +14,7 @@
     if (message.type === 'save') setTimeout(() => receive({ type: 'saved', state: { ...state, ...message.map, spatialEnabled: true }, message: 'Mapa guardado en ambas PCs.' }), 180);
   }
   function receive(message) {
-    if (message.type === 'cameraFrame') { TecRoom.peerFrame(message.data); return; }
+    if (message.type === 'cameraFrame') { TecRoom.peerFrame(message.data, message.id); return; }
     if (message.type === 'tile') { TecRoom.tile(message); return; }
     if (message.type === 'controlOff') { TecRoom.controlOff(); return; }
     if (message.type === 'shown') { TecRoom.shown(); return; }
@@ -23,7 +23,7 @@
     if (message.type === 'roomsPresence') { TecSocial.roomsPresence(message.found); return; }
     if (message.type === 'myFiles' || message.type === 'peerFiles') return;
     if (message.type === 'chat') { TecChat.incoming(message.from, message.text, message.at); return; }
-    if (message.type === 'voice') { TecChat.voice(message.data); return; }
+    if (message.type === 'voice') { TecChat.voice(message.data, message.id); return; }
     if (message.type === 'diagnostic') { $('diag-out').textContent = message.lines.join('\n'); $('diag-out').hidden = false; $('diag-run').disabled = false; $('diag-run').textContent = 'Probar conexión'; $('diag-copy').hidden = false; return; }
     if (message.type === 'toast') { toast(message.message); return; }
     if (message.type === 'error') { saving = false; dirty = true; toast(message.message); update(); return; }
@@ -179,6 +179,14 @@
   // ---- Miembros de la sala (Pantallas) y participantes (Archivos) ----
   const size = n => n >= 1 << 30 ? (n / (1 << 30)).toFixed(1) + ' GB' : n >= 1 << 20 ? (n / (1 << 20)).toFixed(1) + ' MB' : n >= 1024 ? Math.round(n / 1024) + ' KB' : n + ' B';
   function people() {
+    const members = state.members || [];
+    if (members.length > 2) {
+      // Sala con varias PCs: la lista la arma el anfitrión y llega a todos.
+      const owner = state.role === 'Server', size = s => { const [w, h] = String(s).split('×').map(Number); return { width: w || 0, height: h || 0 }; };
+      return members.map(m => ({ who: m.me ? 'me' : m.id, id: m.id, name: m.name, avatar: m.avatar || '', pc: m.pc || '', tag: m.me ? 'Tú' : '', role: m.host ? 'Dueño de la sala' : 'Invitado', screens: (m.screens || []).map(size), on: m.connected !== false,
+        status: m.me ? (state.mode === 'remote' ? 'Controlando la otra PC' : state.mode === 'peer' ? 'La otra PC maneja esta' : 'Mouse en esta PC') : m.mouse ? 'El mouse y las pantallas trabajan con esta PC' : 'En la sala',
+        canUse: owner && !m.me && !m.host && !m.mouse && m.connected !== false, canKick: owner && !m.me && !m.host }));
+    }
     const host = state.role === 'Server', inSession = state.netMode !== 'idle', shown = (state.remote || []).length > 0;
     const list = [{ who: 'me', name: state.machineName, avatar: state.profile?.avatar || '', pc: state.profile?.pc || '', tag: 'Tú', role: !inSession ? 'Sin sesión' : host ? 'Dueño de la sala' : 'Invitado', screens: state.local || [], on: true,
       status: state.mode === 'remote' ? 'Controlando la otra PC' : state.mode === 'peer' ? 'La otra PC maneja esta' : 'Mouse en esta PC' }];
@@ -197,14 +205,16 @@
     data.textContent = `${m.screens.length} ${m.screens.length === 1 ? 'pantalla' : 'pantallas'}${m.screens.length ? ' · ' + m.screens.map(d => `${d.width}×${d.height}`).join(', ') : ''}`;
     st.className = 'state'; st.textContent = m.status; box.append(name, role, data, st);
     if (m.pc && m.pc !== m.name) { const pc = document.createElement('small'); pc.textContent = 'Computadora: ' + m.pc; box.append(pc); }
+    if (m.canUse) { const use = document.createElement('button'); use.type = 'button'; use.className = 'secondary member-act'; use.textContent = 'Usar el mouse con esta PC'; use.onclick = () => send({ type: 'useMouse', id: m.id }); box.append(use); }
+    if (m.canKick) { const kick = document.createElement('button'); kick.type = 'button'; kick.className = 'secondary danger member-act'; kick.textContent = 'Sacar de la sala'; kick.onclick = () => { if (kick.dataset.armed) send({ type: 'kickGuest', id: m.id }); else { kick.dataset.armed = '1'; kick.textContent = '¿Seguro? Pulsa otra vez'; setTimeout(() => { delete kick.dataset.armed; kick.textContent = 'Sacar de la sala'; }, 4000); } }; box.append(kick); }
     if (m.who === 'me') { const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'edit-hint'; edit.textContent = 'Editar mi nombre y foto'; edit.onclick = () => TecSocial.openProfile(true); box.append(edit); }
     li.append(av, box); return li;
   }
   let membersSig = '', shareFilter = null, sharesSig = '';
   function renderMembers() {
-    const list = people(), sig = JSON.stringify(list) + '|' + shareFilter + '|' + (state.shares || []).length;
+    const list = people(), sig = JSON.stringify(list.map(m => ({ ...m, avatar: (m.avatar || '').length }))) + '|' + shareFilter + '|' + (state.shares || []).length;
     if (sig === membersSig) return; membersSig = sig;
-    $('members').replaceChildren(...list.map(memberCard)); $('members-count').textContent = list.length;
+    $('members').replaceChildren(...list.map(memberCard)); $('members-count').textContent = list.length + ' de ' + (state.maxPeople || 10);
     $('file-people').replaceChildren(...list.map(m => {
       const li = memberCard(m), count = (state.shares || []).filter(f => f.mine === (m.who === 'me')).length, b = document.createElement('button');
       b.className = 'secondary'; b.setAttribute('aria-pressed', shareFilter === m.who); b.textContent = shareFilter === m.who ? 'Ver todos los archivos' : `Ver archivos que compartió (${count})`;
@@ -247,6 +257,7 @@
     $('open-session').hidden = !(host && idleNet); $('close-session').hidden = !(host && active); $('copy-code').className = (host && active) ? 'primary' : 'secondary';
     $('host-status').textContent = idleNet && host ? 'Tu sesión está cerrada: nadie puede conectarse a esta PC. Ábrela cuando quieras invitar a alguien.' : legacy ? 'Ahora usas un enlace directo por IP. Pulsa «Abrir mi propia sesión» para invitar con código.' : guest ? 'Estás unido a otra sesión. Sal de ella para invitar a alguien.' : state.connected ? `${state.remoteName || 'Otra PC'} está conectada a tu sesión.` : 'Esperando a que alguien se una con este código.';
     $('host-card').classList.toggle('inactive', !host);
+    if (host && (state.members || []).length > 2) $('host-status').textContent = `${state.members.length - 1} PCs conectadas a tu sala. Caben ${state.maxPeople || 10} en total, contigo.`;
     const addrs = state.addresses || [];
     $('host-address').textContent = addrs.length && active ? `Dirección de esta PC (por si la otra no la encuentra sola): ${addrs.join(' · ')}` : '';
     $('firewall-box').hidden = state.firewall !== false || !(host && active);

@@ -343,3 +343,8 @@ body.cinema #chat-panel{transition:none}
 
 .rc-fps{font-style:normal;font-size:11px;color:var(--muted);margin-left:auto;padding:0 8px;white-space:nowrap}
 .update-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+
+/* Sala con varias PCs: la lista de miembros se desplaza y los botones son compactos */
+.members-panel{display:flex;flex-direction:column;min-height:0}
+.members-panel .members{overflow:auto;max-height:52vh}
+.member .member-act{min-height:34px;padding:0 10px;font-size:12px;margin-top:6px;width:100%}

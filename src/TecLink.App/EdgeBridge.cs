@@ -27,27 +27,21 @@ public sealed partial class EdgeBridge : IDisposable
     private readonly ClipboardWatcher _clipboard;
     private volatile DesktopLayout _desktop;
 
-    private PeerConnection? _connection;
-    private int _remoteWidth;
-    private int _remoteHeight;
-    private bool _remoteKnown;
+    // The PC the mouse and the screens work with ("the active peer") and everything known about it live in a PeerSlot (see
+    // EdgeBridge.Multi.cs): _connection, _remoteKnown, _remoteName, _remoteDisplays... are views of that slot.
     private volatile bool _peerControlling;
 
     private BridgeMode _mode = BridgeMode.Local;
     private int _anchorX, _anchorY;
     private int _entryX, _entryY;
     private RemotePointer? _remotePointer;
-    private string _remoteName = "Otra PC";
-    private DisplayInfo[] _remoteDisplays = Array.Empty<DisplayInfo>();
     private (DisplayInfo Source, ScreenEdge Exit, DisplayInfo Target, ScreenEdge Entry)? _activeRoute;
     private List<ScreenRoute> _spatialLocal = new(), _spatialRemote = new();
-    private bool _spatialValid, _peerMapSupported;
+    private bool _spatialValid;
     private Point? _lastLocalPoint;
     private Rectangle _fastBounds; // inside of the monitor the mouse is on, minus a margin at the edges
     private readonly Dictionary<string, TaskCompletionSource<WireMessage>> _mapRequests = new();
 
-    // Extras negotiated in Hello: pointer settings, remote screen and file transfer.
-    private volatile bool _peerExtras;
     private bool _viewInput;
     private readonly PointerSpeed _speed = new();
     private readonly ScreenShareHost _screenHost = new();
@@ -58,29 +52,41 @@ public sealed partial class EdgeBridge : IDisposable
     public event Action? ViewerCloseRequested;
 
     /// <summary>Raised on the network thread with each camera frame (video-call bubble) of the peer.</summary>
-    public event Action<byte[]>? CameraFrameReceived;
+    public event Action<string, byte[]>? CameraFrameReceived; // (sender id, frame)
     private Task _cameraSend = Task.CompletedTask;
 
     /// <summary>Live chat and voice. Both arrive on the network thread.</summary>
     public event Action<string, string>? ChatReceived;   // (sender name, text)
-    public event Action<byte[]>? VoiceReceived;
+    public event Action<string, byte[]>? VoiceReceived;  // (sender id, audio)
     private int _voicePending;
+
+    /// <summary>Everyone in the room who can receive right now: the owner talks to every guest, a guest only to the owner.</summary>
+    private PeerConnection[] Audience() => _config.Role == PeerRole.Server
+        ? Joined().Where(s => s.Known).Select(s => s.Connection!).ToArray()
+        : _connection is { } c && _remoteKnown ? new[] { c } : Array.Empty<PeerConnection>();
 
     public bool SendChat(string text)
     {
         text = (text ?? "").Trim();
-        if (text.Length == 0 || _connection is not { } conn || !_remoteKnown) return false;
-        _ = conn.SendAsync(WireMessage.ChatText(text.Length > 2000 ? text[..2000] : text));
+        var audience = Audience();
+        if (text.Length == 0 || audience.Length == 0) return false;
+        var message = WireMessage.ChatText(text.Length > 2000 ? text[..2000] : text);
+        foreach (var c in audience) _ = c.SendAsync(message);
         return true;
     }
 
     /// <summary>Voice is sent as it is captured; if the link stalls, old audio is dropped so the call never lags behind.</summary>
     public void SendVoice(byte[] pcm)
     {
-        if (_connection is not { } conn || !_remoteKnown || pcm.Length == 0 || pcm.Length > 64 * 1024) return;
-        if (Volatile.Read(ref _voicePending) > 6) return;
-        Interlocked.Increment(ref _voicePending);
-        _ = conn.SendAsync(WireMessage.VoiceChunk(pcm)).ContinueWith(_ => Interlocked.Decrement(ref _voicePending));
+        var audience = Audience();
+        if (audience.Length == 0 || pcm.Length == 0 || pcm.Length > 64 * 1024) return;
+        if (Volatile.Read(ref _voicePending) > 6 * audience.Length) return;
+        var message = WireMessage.VoiceChunk(pcm);
+        foreach (var c in audience)
+        {
+            Interlocked.Increment(ref _voicePending);
+            _ = c.SendAsync(message).ContinueWith(_ => Interlocked.Decrement(ref _voicePending));
+        }
     }
 
     /// <summary>Raised with the JSON list of files the peer holds in its TecLink folder.</summary>
@@ -96,9 +102,11 @@ public sealed partial class EdgeBridge : IDisposable
     /// <summary>Sends one camera frame; frames are dropped while the previous one is still going out.</summary>
     public void SendCameraFrame(byte[] frame)
     {
-        if (_connection is not { } conn || !_remoteKnown || frame.Length == 0 || frame.Length > 512 * 1024) return;
+        var audience = Audience();
+        if (audience.Length == 0 || frame.Length == 0 || frame.Length > 512 * 1024) return;
         if (!_cameraSend.IsCompleted) return;
-        _cameraSend = conn.SendAsync(WireMessage.CameraFrame(frame));
+        var message = WireMessage.CameraFrame(frame);
+        _cameraSend = Task.WhenAll(audience.Select(c => c.SendAsync(message)));
     }
 
     // Tracks keys/buttons we've injected on THIS machine because the peer is controlling
@@ -208,13 +216,11 @@ public sealed partial class EdgeBridge : IDisposable
 
     // ---- Sessions: invitation code, 10-screen limit and the "management" switch ----
     public const int MaxScreens = 10;
-    private volatile bool _joined;        // host: the guest sent the right code
     private volatile bool _sessionMode;   // this link was made with a code (not a legacy direct IP)
     private volatile bool _management;    // host's switch: may the screens be viewed/controlled?
     private volatile bool _joinAnswered;
     private string _joinNotice = "";
     private volatile bool _joinRefused; // the host said no (wrong code, replaced by another PC): stop retrying until the user asks again
-    private Action? _dropCurrent;
 
     /// <summary>Without a code-based session (legacy direct link) nothing is restricted.</summary>
     public bool ManagementAllowed => !_sessionMode || _management;
@@ -393,22 +399,26 @@ public sealed partial class EdgeBridge : IDisposable
     }
 
     // ---- Leaving a session: the one who leaves gets an empty suite, the other sees "disconnected" ----
-    private volatile string _peerStatus = "none"; // none | connected | left | lost
 
     /// <summary>Tells the peer we are leaving on purpose (so it shows "left", not "link lost").</summary>
     public void AnnounceLeave()
     {
-        try { if (_connection is { } conn && _remoteKnown) conn.SendAsync(WireMessage.Leave()).Wait(300); }
+        try
+        {
+            var tasks = _config.Role == PeerRole.Server
+                ? Joined().Where(s => s.Known).Select(s => s.Connection!.SendAsync(WireMessage.Leave())).ToArray()
+                : _connection is { } conn && _remoteKnown ? new[] { conn.SendAsync(WireMessage.Leave()) } : Array.Empty<Task>();
+            if (tasks.Length > 0) Task.WaitAll(tasks, 300);
+        }
         catch (Exception ex) when (ex is AggregateException or ObjectDisposedException) { }
     }
-
     /// <summary>Forgets the other PC completely: no screens, name, map entries or camera. Used when WE leave.</summary>
     public void ClearRemote()
     {
         _remoteDisplays = Array.Empty<DisplayInfo>();
         _remoteName = "Otra PC"; _remoteKnown = false; _peerMapSupported = false; ResetRemoteProfile(); _peerExtras = false; _peerStatus = "none";
         _spatialValid = false; _spatialLocal = new(); _spatialRemote = new(); _activeRoute = null;
-        ClearSuite();
+        _roster = new(); _youId = null; ClearSuite();
         if (_config.ScreenPositions.Any(p => p.Remote))
         {
             _config.ScreenPositions = _config.ScreenPositions.Where(p => !p.Remote).ToList();
@@ -417,64 +427,49 @@ public sealed partial class EdgeBridge : IDisposable
         _clipboard.BeginInvoke(() => { SwitchToLocal(force: true); ReleaseAllInjectedInput(); ViewerCloseRequested?.Invoke(); });
     }
 
-    private void HandleJoin(WireMessage msg)
+    private void HandleJoin(PeerSlot slot, WireMessage msg)
     {
-        if (_connection is not { } conn) return;
+        if (slot.Connection is not { } conn) return;
         var parts = (msg.Text ?? "").Split(Sep);
         if (SessionDiscovery.Normalize(parts[0]) != SessionDiscovery.Normalize(_config.SessionCode))
         {
             _ = conn.SendAsync(WireMessage.JoinResult(false, "Código incorrecto"));
-            _ = Task.Delay(400).ContinueWith(_ => _dropCurrent?.Invoke());
+            _ = Task.Delay(400).ContinueWith(_ => slot.Drop?.Invoke());
+            return;
+        }
+        if (RoomFull() && !slot.Joined && slot.Request is null)
+        {
+            Reject(slot, $"La sala está llena: el máximo es {MaxPeople} PCs.");
             return;
         }
         // A returning guest does not get in by itself: the owner is asked first (notifications, next to the gear).
-        if (parts.Length > 1 && parts[1] == "ask") { RequestJoin(conn, parts.Length > 2 ? parts[2] : ""); return; }
-        AcceptJoin(conn);
+        if (parts.Length > 1 && parts[1] == "ask") { RequestJoin(slot, parts.Length > 2 ? parts[2] : ""); return; }
+        AcceptJoin(slot);
     }
 
-    private void AcceptJoin(PeerConnection conn)
+    private void Reject(PeerSlot slot, string reason)
     {
-        _joined = true; _sessionMode = true;
-        _ = conn.SendAsync(WireMessage.JoinResult(true));
-        _ = conn.SendAsync(WireMessage.Management(_management));
-        _ = SendDesktopAsync(conn);
-        StatusChanged?.Invoke("Invitado conectado — enviando identificación...");
-    }
-
-    private void Reject(string reason)
-    {
-        if (_connection is { } conn) _ = conn.SendAsync(WireMessage.JoinResult(false, reason));
-        _ = Task.Delay(400).ContinueWith(_ => _dropCurrent?.Invoke());
+        if (slot.Connection is { } conn) _ = conn.SendAsync(WireMessage.JoinResult(false, reason));
+        _ = Task.Delay(400).ContinueWith(_ => slot.Drop?.Invoke());
         StatusChanged?.Invoke(reason);
     }
-
     public async Task RunNetworkingAsync(CancellationToken ct)
     {
-        if (_config.Role == PeerRole.Server)
-            _ = SessionDiscovery.RunResponderAsync(() => SessionDiscovery.Normalize(_config.SessionCode) ?? "", _config.Port, ct,
-                ex => { Logger.LogError(ex); StatusChanged?.Invoke("Otra PC no podrá encontrarte: " + ex.Message); });
+        if (_config.Role == PeerRole.Server) await RunHostAsync(ct); else await RunGuestAsync(ct);
+    }
+
+    /// <summary>Guest side: one connection, to the owner of the room.</summary>
+    private async Task RunGuestAsync(CancellationToken ct)
+    {
         _joinRefused = false;
-        HostAdmission? admission = null;
-        AdmittedConnection? guest = null;
-        try
-        {
         while (!ct.IsCancellationRequested)
         {
             PeerConnection connection;
-            guest = null;
-            var guestCode = _config.Role == PeerRole.Client ? SessionDiscovery.Normalize(_config.JoinCode) : null;
+            var guestCode = SessionDiscovery.Normalize(_config.JoinCode);
             try
             {
-                if (_config.Role == PeerRole.Server) StatusChanged?.Invoke($"Sesión abierta — código {SessionDiscovery.Pretty(_config.SessionCode)}");
-                else StatusChanged?.Invoke(guestCode is not null ? "Buscando la sesión en tu red..." : $"Conectando a {_config.PeerHost}:{_config.Port}...");
-
-                if (_config.Role == PeerRole.Server)
-                {
-                    admission ??= CreateAdmission(ct);
-                    guest = await admission.Guests.ReadAsync(ct);
-                    connection = guest.Connection;
-                }
-                else if (guestCode is not null)
+                StatusChanged?.Invoke(guestCode is not null ? "Buscando la sesión en tu red..." : $"Conectando a {_config.PeerHost}:{_config.Port}...");
+                if (guestCode is not null)
                 {
                     var (host, how) = await SessionDiscovery.FindHostAsync(guestCode, _config.Port, TimeSpan.FromSeconds(6), ct);
                     if (host is not null) Logger.Info($"Sesión encontrada en {host.Address} (búsqueda {how}).");
@@ -500,61 +495,50 @@ public sealed partial class EdgeBridge : IDisposable
                 }
                 else connection = await PeerServer.ConnectAsync(_config.PeerHost, _config.Port, ct);
             }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
+            catch (OperationCanceledException) { return; }
             catch (Exception ex)
             {
-                if (admission is not null) { try { await admission.DisposeAsync(); } catch (Exception) { } admission = null; }
                 if (guestCode is not null) _joinNotice = $"No pude conectar: {ex.Message}. Reintentando...";
                 StatusChanged?.Invoke($"Error de red: {ex.Message}. Reintentando en 3s...");
                 await Task.Delay(3000, ct);
                 continue;
             }
 
-            _connection = connection;
-            _remoteKnown = false; _joinRequest = null; ResetRemoteProfile();
-            _joined = false; _joinAnswered = false;
-            if (_config.Role == PeerRole.Client) _management = false; // a host's switch survives guests coming and going
-            _sessionMode = _config.Role == PeerRole.Server || guestCode is not null;
+            // The new link starts from what the previous one showed (name, screens, status) so a reconnection does not blink the panel.
+            var previous = _active;
+            var slot = new PeerSlot { Id = "host", Connection = connection };
+            if (previous is not null) { slot.Name = previous.Name; slot.Displays = previous.Displays; slot.Width = previous.Width; slot.Height = previous.Height; slot.Status = previous.Status; }
+            lock (_slotLock) { _active = slot; _slots.Clear(); _slots.Add(slot); }
+            _roster = new(); _youId = null;
+            _joinAnswered = false;
+            _management = false; // a host's switch is told to the guest right after it joins
+            _sessionMode = guestCode is not null;
             var disconnectedTcs = new TaskCompletionSource();
-            _dropCurrent = () => disconnectedTcs.TrySetResult();
+            slot.Drop = () => disconnectedTcs.TrySetResult();
 
             connection.Disconnected += () => disconnectedTcs.TrySetResult();
-            if (guest is not null) guest.Attach(OnMessageReceived); // the host's admission is already receiving; this replays the code and the Hello
-            else { connection.MessageReceived += OnMessageReceived; connection.StartReceiving(); }
+            connection.MessageReceived += msg => OnMessageReceived(slot, msg);
+            connection.StartReceiving();
             if (connection.IsDisconnected) disconnectedTcs.TrySetResult();
 
-            if (_config.Role == PeerRole.Client)
+            StatusChanged?.Invoke("Conectado — enviando identificación...");
+            if (guestCode is not null)
             {
-                StatusChanged?.Invoke("Conectado — enviando identificación...");
-                if (guestCode is not null)
-                {
-                    await connection.SendAsync(WireMessage.Join(_askedToJoin ? guestCode + Sep + "ask" + Sep + OwnName : guestCode));
-                    // An older host never answers: treat the link as a legacy direct one.
-                    _ = Task.Delay(2500).ContinueWith(_ => { if (_connection == connection && !_joinAnswered) _sessionMode = false; });
-                }
-                await SendDesktopAsync(connection);
+                await connection.SendAsync(WireMessage.Join(_askedToJoin ? guestCode + Sep + "ask" + Sep + OwnName : guestCode));
+                // An older host never answers: treat the link as a legacy direct one.
+                _ = Task.Delay(2500).ContinueWith(_ => { if (slot.Connection == connection && !_joinAnswered) _sessionMode = false; });
             }
+            await SendDesktopAsync(connection);
 
-            // A host keeps listening while a guest is connected: a valid newcomer replaces a link that died silently.
-            using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            var newcomer = admission is not null ? admission.Guests.WaitToReadAsync(waitCts.Token).AsTask() : Task.Delay(Timeout.Infinite, waitCts.Token);
-            await Task.WhenAny(disconnectedTcs.Task, newcomer, Task.Delay(Timeout.Infinite, ct));
-            var replaced = admission is not null && newcomer.IsCompletedSuccessfully && !disconnectedTcs.Task.IsCompleted && !ct.IsCancellationRequested;
-            waitCts.Cancel();
-            if (replaced) { Logger.Info("Entró un invitado nuevo con el código: reemplaza la conexión anterior."); StatusChanged?.Invoke("Un invitado nuevo reemplaza la conexión anterior..."); }
-            _dropCurrent = null;
-            _sessionMode = false; _joined = false;
-            if (_config.Role == PeerRole.Client) _management = false;
+            try { await Task.WhenAny(disconnectedTcs.Task, Task.Delay(Timeout.Infinite, ct)); } catch (OperationCanceledException) { }
+            _sessionMode = false; _management = false;
 
-            if (_peerStatus == "connected") _peerStatus = "lost";
-            StatusChanged?.Invoke(ct.IsCancellationRequested ? "TecLink apagado" : _peerStatus == "left" ? $"{_remoteName} salió de la sesión." : _peerStatus == "lost" ? $"{_remoteName} se desconectó." : "Conexión perdida. Reintentando...");
-            _connection = null; _joinRequest = null;
-            _remoteKnown = false;
+            if (slot.Status == "connected") slot.Status = "lost";
+            StatusChanged?.Invoke(ct.IsCancellationRequested ? "TecLink apagado" : slot.Status == "left" ? $"{slot.Name} salió de la sesión." : slot.Status == "lost" ? $"{slot.Name} se desconectó." : "Conexión perdida. Reintentando...");
+            slot.Connection = null; slot.Known = false; slot.Extras = false; slot.Drop = null; slot.Joined = false;
+            _roster = new(); _youId = null; // the list of the room belongs to the link that just ended
+            lock (_slotLock) _slots.Clear();
             _peerControlling = false;
-            _peerExtras = false;
             _screenHost.Stop(); _tilesForPeer.Stop();
             Files.Abort();
             _clipboard.BeginInvoke(() =>
@@ -564,46 +548,57 @@ public sealed partial class EdgeBridge : IDisposable
                 ReleaseAllInjectedInput();
                 ViewerCloseRequested?.Invoke();
             });
-            if (replaced) { try { await connection.SendAsync(WireMessage.JoinResult(false, "Otra PC entró con el código y tomó la sesión.")).WaitAsync(TimeSpan.FromMilliseconds(600)); } catch (Exception) { } }
             await connection.DisposeAsync();
 
             if (ct.IsCancellationRequested) return;
-            if (_joinRefused && _config.Role == PeerRole.Client)
+            if (_joinRefused)
             {
                 // Retrying would only repeat the refusal (or fight another PC for the session): wait for the user.
                 StatusChanged?.Invoke(_joinNotice);
                 await Task.Delay(Timeout.Infinite, ct);
             }
-            if (_config.Role == PeerRole.Server) continue; // the next guest, if any, is already waiting in the queue
             await Task.Delay(string.IsNullOrEmpty(_joinNotice) ? 2000 : 5000, ct); // refused: don't hammer the host
         }
-        }
-        finally { if (admission is not null) await admission.DisposeAsync(); }
     }
-
     private HostAdmission CreateAdmission(CancellationToken ct)
     {
-        var admission = new HostAdmission(_config.Port, () => _config.SessionCode, TimeSpan.FromSeconds(5), ct, () => _joined && _remoteKnown && _connection is not null);
+        var admission = new HostAdmission(_config.Port, () => _config.SessionCode, TimeSpan.FromSeconds(5), ct, () => RoomFull());
         admission.Refused += (who, why) => { Logger.Info($"Conexión de {who} rechazada: {why}."); if (why.StartsWith("código")) StatusChanged?.Invoke($"Alguien en {who} intentó entrar con un código incorrecto."); };
         return admission;
     }
 
-    private void OnMessageReceived(WireMessage msg)
+    private void OnMessageReceived(PeerSlot slot, WireMessage msg)
     {
         if (_clipboard.IsDisposed) return;
+        _rx = slot; // everything the proxies read while this message is handled belongs to the PC that sent it
+        try { HandleMessage(slot, msg); } finally { _rx = null; }
+    }
+
+    private void HandleMessage(PeerSlot slot, WireMessage msg)
+    {
         // A host talks to nobody who has not shown the invitation code.
-        if (msg.Type == MessageType.Join) { if (_config.Role == PeerRole.Server) HandleJoin(msg); return; }
-        if (_config.Role == PeerRole.Server && !_joined) return;
+        if (msg.Type == MessageType.Join) { if (_config.Role == PeerRole.Server) HandleJoin(slot, msg); return; }
+        if (_config.Role == PeerRole.Server && !slot.Joined) return;
+        // What a room shares among everybody: who is in it, chat, voice and camera (a guest's go through the owner to the others).
+        if (msg.Type == MessageType.Relay) { HandleRelay(msg); return; }
+        if (msg.Type == MessageType.Roster) { HandleRoster(msg.Text); return; }
+        if (msg.Type == MessageType.CameraFrame) { if (_config.Role == PeerRole.Server) RouteCamera(slot, msg.Data); else CameraFrameReceived?.Invoke("host", msg.Data); return; }
+        if (msg.Type == MessageType.Voice) { if (_config.Role == PeerRole.Server) RouteVoice(slot, msg.Data); else VoiceReceived?.Invoke("host", msg.Data); return; }
+        if (msg.Type == MessageType.Chat)
+        {
+            if (_config.Role == PeerRole.Server) RouteChat(slot, msg.Text);
+            else if (!string.IsNullOrWhiteSpace(msg.Text)) ChatReceived?.Invoke(slot.Name, msg.Text!.Length > 2000 ? msg.Text[..2000] : msg.Text);
+            return;
+        }
+        // The other guests of the room only introduce themselves; the mouse, the screens and the files work with the active peer.
+        if (!ReferenceEquals(slot, _active))
+        {
+            _clipboard.BeginInvoke(() => { _rx = slot; try { HandleSecondary(slot, msg); } finally { _rx = null; } });
+            return;
+        }
         // Bulk data stays on the network thread: writing to disk here is what
         // throttles the sender, and frames are decoded off the UI thread.
         if (Files.Handle(msg)) return;
-        if (msg.Type == MessageType.CameraFrame) { CameraFrameReceived?.Invoke(msg.Data); return; }
-        if (msg.Type == MessageType.Voice) { VoiceReceived?.Invoke(msg.Data); return; }
-        if (msg.Type == MessageType.Chat)
-        {
-            if (!string.IsNullOrWhiteSpace(msg.Text)) ChatReceived?.Invoke(_remoteName, msg.Text!.Length > 2000 ? msg.Text[..2000] : msg.Text);
-            return;
-        }
         if (msg.Type == MessageType.FileListRequest)
         {
             _ = _connection?.SendAsync(WireMessage.FileList(System.Text.Json.JsonSerializer.Serialize(Files.List(), PeerFilesJson)));
@@ -621,10 +616,9 @@ public sealed partial class EdgeBridge : IDisposable
         if (msg.Type == MessageType.ScreenAck) { _screenHost.Ack(); return; }
         if (_clipboard.InvokeRequired)
         {
-            _clipboard.BeginInvoke(() => OnMessageReceived(msg));
+            _clipboard.BeginInvoke(() => { _rx = slot; try { HandleMessage(slot, msg); } finally { _rx = null; } });
             return;
-        }
-        switch (msg.Type)
+        }        switch (msg.Type)
         {
             case MessageType.Hello:
                 if (msg.ScreenWidth <= 0 || msg.ScreenHeight <= 0) break;
@@ -640,7 +634,7 @@ public sealed partial class EdgeBridge : IDisposable
                 if (_config.Role == PeerRole.Server && LocalDisplays().Length + _remoteDisplays.Length > MaxScreens)
                 {
                     _remoteKnown = false;
-                    Reject($"Límite de {MaxScreens} pantallas por sesión: esta sesión ya tiene {LocalDisplays().Length} y la PC invitada trae {_remoteDisplays.Length}.");
+                    Reject(slot, $"Límite de {MaxScreens} pantallas por sesión: esta sesión ya tiene {LocalDisplays().Length} y la PC invitada trae {_remoteDisplays.Length}.");
                     break;
                 }
                 if (_peerExtras && _config.Role == PeerRole.Server)
@@ -653,9 +647,11 @@ public sealed partial class EdgeBridge : IDisposable
                     _ = _connection!.SendAsync(WireMessage.Map(Guid.NewGuid().ToString("N"), _config.ScreenPositions.ToArray()));
                 StatusChanged?.Invoke($"Vinculado con {_remoteName} ({_remoteWidth}x{_remoteHeight})");
                 SendProfile();
+                if (_config.Role == PeerRole.Server) BroadcastRoster();
                 break;
             case MessageType.Profile:
                 HandleProfile(msg.Text);
+                if (_config.Role == PeerRole.Server) BroadcastRoster();
                 break;
             case MessageType.JoinResult:
                 _joinAnswered = true;
@@ -1065,6 +1061,7 @@ public sealed partial class EdgeBridge : IDisposable
         var order = _config.ScreenOrder;
         return new
         {
+            members = MembersView(), maxPeople = MaxPeople, isHost = _config.Role == PeerRole.Server, mouseWith = _active?.Id ?? "",
             machineName = OwnName, remoteName = _remoteName, remoteAvatar = _remoteAvatar ?? "", remotePc = _remotePc ?? "",
             profile = ProfileView(), notifications = NotificationsView(), savedRooms = SavedRoomsView(), canSaveRoom = CanSaveRoom,
             joinedByAsk = _askedToJoin,

@@ -49,8 +49,9 @@ public sealed class AppConfig
     /// <summary>Rooms this person saved to come back to; each one is asked to the host as a request.</summary>
     public List<SavedRoom> SavedRooms { get; set; } = new();
 
-    private static string ConfigPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TecLink", "config.json");
+    // TECLINK_CONFIG lets the automated tests keep their settings away from the real ones.
+    private static string ConfigPath => Environment.GetEnvironmentVariable("TECLINK_CONFIG")
+        ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TecLink", "config.json");
 
     public static AppConfig? TryLoad()
     {

@@ -456,7 +456,7 @@ finally { try { Directory.Delete(work, true); } catch (IOException) { } }
     Check(!host.Guests.TryRead(out _), "A probe never turns into a guest (nobody is kicked out)");
     Check(SessionDiscovery.LocalSubnetCandidates().Count > 0 || true, "Local candidates can be listed");
 }
-// ---- Returning guests ask permission; a host that is busy refuses the request without kicking anyone out ----
+// ---- Returning guests ask permission; a full room refuses the request without kicking anyone out ----
 {
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
     const string Code = "K7M4QX";
@@ -473,7 +473,7 @@ finally { try { Directory.Delete(work, true); } catch (IOException) { } }
     second.StartReceiving();
     await second.SendAsync(WireMessage.Join(Code + "\u001fask\u001fLuis"));
     var refused = await answer.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    Check(!refused.Accepted && refused.Text!.Contains("otra persona"), "A busy host refuses a request politely");
+    Check(!refused.Accepted && refused.Text!.Contains("llena"), "A full room refuses a request politely");
     Check(!host.Guests.TryRead(out _), "A refused request never becomes a guest (the current one stays)");
 }
 Console.WriteLine($"PASS: {checks} geometry, input, map, TCP, pointer and file-transfer regression checks");

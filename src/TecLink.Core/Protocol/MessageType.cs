@@ -39,6 +39,8 @@ public enum MessageType : byte
     ShareOffer = 36,      // JSON {id,name,size,isDirectory}: a file was shared with the session
     ShareFetch = 37,      // "<id>": send me that shared file now
     Profile = 38,         // JSON {name,pc,avatar}: how this person wants to appear in the room
+    Relay = 39,           // host -> guest: something another guest sent (Text = sender id, Data = the encoded inner message)
+    Roster = 40,          // host -> guest: JSON {you, members:[{id,name,pc,avatar,host,mouse}]}: who is in the room
     Leave = 30,         // the sender is leaving the session on purpose (not a dropped link)
 }
 

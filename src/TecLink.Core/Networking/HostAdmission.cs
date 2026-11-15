@@ -14,7 +14,9 @@ public sealed class AdmittedConnection
     private Action<WireMessage>? _live;
 
     public PeerConnection Connection { get; }
-    internal AdmittedConnection(PeerConnection connection) => Connection = connection;
+    /// <summary>Network address the guest connected from.</summary>
+    public string Address { get; }
+    internal AdmittedConnection(PeerConnection connection, string address) { Connection = connection; Address = address; }
 
     internal void Receive(WireMessage message)
     {
@@ -86,7 +88,7 @@ public sealed class HostAdmission : IAsyncDisposable
         try
         {
             connection = new PeerConnection(client);
-            var holder = new AdmittedConnection(connection);
+            var holder = new AdmittedConnection(connection, who);
             var joined = new TaskCompletionSource<WireMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
             connection.MessageReceived += message =>
             {
@@ -113,7 +115,7 @@ public sealed class HostAdmission : IAsyncDisposable
             var parts = (join.Text ?? "").Split('\u001f');
             if (parts.Length > 1 && parts[1] == "ask" && _isBusy?.Invoke() == true && expected is not null && SessionDiscovery.Normalize(parts[0]) == expected)
             {
-                await connection.SendAsync(WireMessage.JoinResult(false, "Quien abrió la sala está ahora mismo con otra persona. Inténtalo más tarde."));
+                await connection.SendAsync(WireMessage.JoinResult(false, "La sala está llena: el máximo es 10 PCs."));
                 await Task.Delay(300, ct);
                 await connection.DisposeAsync();
                 return;
