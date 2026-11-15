@@ -80,7 +80,7 @@
     if (cinema === on && (!on || (only || null) === cinemaOnly)) return;
     cinema = on; cinemaOnly = on ? only || null : null; document.body.classList.toggle('cinema', on); $('cinema-bar').hidden = !on; $('room-cinema').setAttribute('aria-pressed', on);
     api.send({ type: 'roomFullscreen', on }); signature = ''; lastWatch = '';
-    if (on) { full = null; if (control) setControl(null); }
+    if (on) { full = null; if (control && control !== only) setControl(null); if (only) autoControl(only); }
     requestAnimationFrame(() => render(undefined, true));
   }
   function apply(node, key) {
@@ -150,6 +150,7 @@
   function setFull(key) {
     if (control && key !== control) setControl(null);
     full = key; signature = ''; lastWatch = ''; render();
+    if (key) autoControl(key);
     if (key) room().querySelector(`[data-key="${CSS.escape(key)}"]`)?.focus();
   }
   function setControl(key) {
@@ -157,6 +158,13 @@
     control = key; api.send({ type: 'tileControl', on: !!key });
     if (key) api.toast('Controlas la otra PC con el mouse sobre su imagen y con el teclado. Pulsa «Soltar control» para terminar.');
     render();
+  }
+  // Pantalla completa de la otra PC = controlarla: lo que haces con el mouse y el teclado sobre su imagen pasa a esa PC (solo si es tuya o te dieron permiso).
+  function autoControl(key) {
+    const item = screens().find(i => i.key === key);
+    if (!item || !item.remote || item.offline || !canSee()) return;
+    if (state.control && state.control.own === false && !state.control.iControl) return;
+    setControl(key);
   }
   function controlOff() { if (!control) return; control = null; render(); }
 
