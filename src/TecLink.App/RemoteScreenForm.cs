@@ -238,6 +238,7 @@ public sealed class RemoteScreenForm : Form
             _bridge.ScreenFrameReceived -= OnFrame;
             _bridge.ViewerCloseRequested -= OnCloseRequested;
             _bridge.StopViewing();
+            _bridge.ViewerClosedByUser(); // with another person's PC, closing the window also ends the permission
         }
         _frame?.Dispose();
         _frame = null;
