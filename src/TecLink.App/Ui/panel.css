@@ -356,3 +356,11 @@ body.cinema #chat-panel{transition:none}
 .relay-more{border:1px solid var(--line);border-radius:8px;padding:0 12px 12px}.relay-more>summary{cursor:pointer;min-height:44px;display:flex;align-items:center}.relay-more input{width:100%;margin:6px 0 10px}
 
 .app-version{font-style:normal;font-size:12px;font-weight:600;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:1px 8px;vertical-align:middle;margin-left:6px;letter-spacing:0}
+
+/* Botones de descarga y desinstalacion junto a la campanita */
+.header-actions{gap:10px}
+.gear-danger:hover,.gear-danger:focus-visible{border-color:var(--red);color:var(--red)}
+#dl-pop{position:fixed;top:72px;right:18px;width:min(380px,calc(100vw - 24px));background:var(--panel);border:1px solid var(--line);border-radius:12px;z-index:93;box-shadow:0 14px 40px rgba(0,0,0,.5)}
+#dl-pop .file-actions{padding:0}
+#uninstall-scrim{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:96}
+#uninstall{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(440px,calc(100vw - 24px));background:var(--panel);border:1px solid var(--red);border-radius:14px;padding:22px;z-index:97;display:flex;flex-direction:column;gap:12px;box-shadow:0 20px 60px rgba(0,0,0,.6)}

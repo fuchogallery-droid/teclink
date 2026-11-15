@@ -152,7 +152,7 @@ public sealed class TrayAppContext : ApplicationContext
 
     private void ShowPanel()
     {
-        if (_panel is null || _panel.IsDisposed) _panel = new ControlPanelForm(_bridge, () => _status, () => ShowViewer(), SetPower, Session, ShowFullScreen);
+        if (_panel is null || _panel.IsDisposed) _panel = new ControlPanelForm(_bridge, () => _status, () => ShowViewer(), SetPower, Session, ShowFullScreen, Uninstall);
         _panel.Show();
         if (_panel.WindowState == FormWindowState.Minimized) _panel.WindowState = FormWindowState.Normal;
         _panel.Activate();
@@ -202,6 +202,17 @@ public sealed class TrayAppContext : ApplicationContext
     {
         Directory.CreateDirectory(_bridge.Files.ReceiveFolder);
         System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(_bridge.Files.ReceiveFolder) { UseShellExecute = true });
+    }
+
+    /// <summary>Starts the uninstaller that came with the installer and closes TecLink so it can remove every file. False when there is none (a copy that was not installed).</summary>
+    private bool Uninstall()
+    {
+        var uninstaller = Path.Combine(AppContext.BaseDirectory, "unins000.exe");
+        if (!File.Exists(uninstaller)) return false;
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(uninstaller) { UseShellExecute = true }); }
+        catch (System.ComponentModel.Win32Exception) { return false; }
+        _clipboard.BeginInvoke(ExitApp);
+        return true;
     }
 
     private void ExitApp()
