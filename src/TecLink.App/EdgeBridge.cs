@@ -836,7 +836,7 @@ public sealed partial class EdgeBridge : IDisposable
                 return;
             }
             if (_config.UseSpatialMap) return; // An unavailable map must not reactivate legacy exits.
-            if (_connection is null || !_remoteKnown || _peerControlling || !_config.AutomaticSwitching || !ManagementAllowed || !OwnRoom) return;
+            if (_connection is null || !_remoteKnown || _peerControlling || !_config.AutomaticSwitching || !ManagementAllowed || (!OwnRoom && !_iControl)) return;
             var desktop = _desktop;
             var point = new Point(e.X, e.Y);
             var source = LocalDisplays().FirstOrDefault(s => s.Bounds.Contains(point));
@@ -1306,7 +1306,7 @@ public sealed partial class EdgeBridge : IDisposable
         var source = local.FirstOrDefault(d => d.Bounds.Contains(previous)) ?? local.FirstOrDefault(d => d.Bounds.Contains(candidate));
         if (source is null) { _lastLocalPoint = candidate; return; }
         var transition = SpatialNavigation.Find(source, previous, candidate, _spatialLocal, local, _remoteDisplays);
-        if (transition is not null && !Cooling() && (!transition.Route.TargetRemote || (_config.AutomaticSwitching && ManagementAllowed && OwnRoom)))
+        if (transition is not null && !Cooling() && (!transition.Route.TargetRemote || (_config.AutomaticSwitching && ManagementAllowed && (OwnRoom || _iControl))))
         {
             e.Suppress = true;
             if (transition.Route.TargetRemote)
