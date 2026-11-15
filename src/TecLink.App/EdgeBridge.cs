@@ -219,7 +219,8 @@ public sealed partial class EdgeBridge : IDisposable
     private volatile bool _joinRefused; // the host said no (wrong code, replaced by another PC): stop retrying until the user asks again
 
     /// <summary>Without a code-based session (legacy direct link) nothing is restricted.</summary>
-    public bool ManagementAllowed => !_sessionMode || _management;
+    /// <summary>In "Mis computadoras" every PC is the same person's: nothing to switch on. With other people, the owner's switch (or a permission just granted) decides.</summary>
+    public bool ManagementAllowed => !_sessionMode || _management || RoomMode == RoomOwn || _iControl;
     public string SessionCode => _config.SessionCode;
 
     public void StartHosting()
@@ -1109,7 +1110,7 @@ public sealed partial class EdgeBridge : IDisposable
             netMode = !NetworkActive ? "idle" : _config.Role == PeerRole.Server ? "host" : "guest",
             sessionCode = SessionDiscovery.Pretty(SessionDiscovery.Normalize(_config.SessionCode) ?? ""),
             joinCode = SessionDiscovery.Pretty(SessionDiscovery.Normalize(_config.JoinCode) ?? ""),
-            sessionMode = _sessionMode, management = _management, joinNotice = _joinNotice, maxScreens = MaxScreens,
+            sessionMode = _sessionMode, management = _management || RoomMode == RoomOwn, joinNotice = _joinNotice, maxScreens = MaxScreens,
             addresses = CachedAddresses(), firewall = FirewallAllowed(), peerAddress = _config.PeerHost,
             pointerSpeed = CurrentSpeedLevel(), cursorStyle = CursorStyler.Normalize(_config.CursorStyle),
             cursorSize = CursorStyler.ClampSize(_config.CursorSizePercent), extras = CanUseExtras,

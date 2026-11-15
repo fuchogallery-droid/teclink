@@ -225,11 +225,10 @@ Console.WriteLine("== Modo de la sala y permiso de control ==");
     mh.Bridge.EndControl();
     Check(await Until(() => !Control(mg).GetProperty("iControl").GetBoolean() && Control(mh).GetProperty("controlledBy").ValueKind == JsonValueKind.Null, 15), "quien es controlado puede detenerlo cuando quiera");
     // owner switches the room to "Mis computadoras": no permission needed any more
-    mh.Bridge.SetManagement(true); // in this mode the owner's «Gestión de pantallas» switch is the only gate, as always
     mh.Bridge.SetRoomMode("own");
     Check(await Until(() => Control(mg).GetProperty("own").GetBoolean(), 15), "el dueño cambia a «Mis computadoras» y el invitado lo sabe");
     mg.Bridge.RequestControl();
-    Check(await Until(() => granted == 2, 10) && Control(mh).GetProperty("asking").ValueKind == JsonValueKind.Null, "en «Mis computadoras» no se pregunta nada");
+    Check(await Until(() => granted == 2, 10) && Control(mh).GetProperty("asking").ValueKind == JsonValueKind.Null, "en «Mis computadoras» no se pregunta nada y no hace falta activar la gestión");
     mh.Bridge.SetRoomMode("people");
     Check(await Until(() => !Control(mg).GetProperty("own").GetBoolean(), 15), "y puede volver a «Con otras personas»");
     mh.Cts.Cancel(); mg.Cts.Cancel(); await Task.Delay(1000);
