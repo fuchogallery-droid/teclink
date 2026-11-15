@@ -45,7 +45,7 @@ public sealed class ControlPanelForm : Form
     public ControlPanelForm(EdgeBridge bridge, Func<string> status, Action openViewer, Action<bool> setPower, Action<string, string?, string?> session, Action<bool, string?> fullScreen)
     {
         _bridge = bridge; _status = status; _openViewer = openViewer; _setPower = setPower; _session = session; _fullScreen = fullScreen;
-        Text = "TecLink — pantallas y salidas";
+        Text = $"TecLink {AppInfo.VersionText} — pantallas y salidas";
         Icon = TrayAppContext.AppIcon;
         ClientSize = new Size(1120, 760);
         MinimumSize = new Size(370, 600);
@@ -246,6 +246,13 @@ public sealed class ControlPanelForm : Form
                     _bridge.SetOnline(root.GetProperty("on").GetBoolean(), root.TryGetProperty("relay", out var relayText) ? relayText.GetString() : null);
                     if (_bridge.HostingNow) _session("open", null, null); // the room opens or closes on the internet with the session
                     RefreshState();
+                    break;
+                case "refreshRelay":
+                    _ = Task.Run(async () =>
+                    {
+                        var changed = await _bridge.RefreshRelayNowAsync();
+                        if (!IsDisposed && IsHandleCreated) BeginInvoke(() => { if (changed && _bridge.HostingNow) _session("open", null, null); Post(new { type = "toast", message = changed ? "Servidor en línea actualizado." : "El servidor en línea ya estaba al día." }); RefreshState(); });
+                    });
                     break;
                 case "renewOnline": _bridge.RenewOnlineInvite(); if (_bridge.HostingNow) _session("open", null, null); RefreshState(); break;
                 case "setClipboard": _bridge.SetShareClipboard(root.GetProperty("on").GetBoolean()); RefreshState(); break;

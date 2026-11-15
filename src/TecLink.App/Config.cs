@@ -45,11 +45,13 @@ public sealed class AppConfig
     /// <summary>Off by default: TecLink never copies the clipboard between PCs unless the person asks for it.</summary>
     public bool ShareClipboard { get; set; }
     /// <summary>Also open this PC's room on the internet (through the online relay), so people in other cities or networks can join.</summary>
-    public bool OnlineEnabled { get; set; }
+    public bool OnlineEnabled { get; set; } = true;
     /// <summary>Secret of this PC's online room (16 characters); it never leaves the two PCs, only a hash of it reaches the relay.</summary>
     public string OnlineSecret { get; set; } = "";
     /// <summary>Address of the online relay used to open the room, for example relay.example.com.</summary>
     public string RelayHost { get; set; } = "";
+    /// <summary>True only when the person typed the relay address by hand; otherwise TecLink keeps it up to date by itself.</summary>
+    public bool RelayHostPinned { get; set; }
     /// <summary>Guest: secret and relay of the online invitation that was pasted (empty = a normal local join).</summary>
     public string JoinSecret { get; set; } = "";
     public string JoinRelay { get; set; } = "";
