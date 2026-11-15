@@ -1,5 +1,5 @@
-﻿; TecLink: instalador por usuario (no pide permisos de administrador).
-#define AppVer "0.8.0"
+; TecLink: instalador por usuario (no pide permisos de administrador).
+#define AppVer "0.8.1"
 #ifndef Src
   #define Src "..\publish"
 #endif
@@ -43,3 +43,11 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 
 [Run]
 Filename: "{app}\TecLink.exe"; Description: "Abrir TecLink ahora"; Flags: nowait postinstall skipifsilent
+
+[UninstallDelete]
+; The panel's web cache is TecLink's own: it goes away with the program. The settings (config.json) stay in case it is installed again.
+Type: filesandordirs; Name: "{localappdata}\TecLink"
+
+[UninstallRun]
+; Best effort: takes away the Firewall permission TecLink asked for (needs administrator rights, so it only works if the uninstaller has them).
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""TecLink (sesiones)"""; Flags: runhidden; RunOnceId: "QuitarReglaFirewall"
