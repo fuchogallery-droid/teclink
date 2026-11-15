@@ -24,12 +24,19 @@ public sealed class ClipboardWatcher : Form
         Height = 0;
     }
 
-    protected override void OnHandleCreated(EventArgs e)
-    {
-        base.OnHandleCreated(e);
-        Win32.AddClipboardFormatListener(Handle);
-    }
+    private bool _listening;
 
+    /// <summary>The clipboard is only listened to while the person has chosen to share it; otherwise TecLink never reads it.</summary>
+    public bool Sharing
+    {
+        get => _listening;
+        set
+        {
+            if (value == _listening || !IsHandleCreated) return;
+            if (value) _listening = Win32.AddClipboardFormatListener(Handle);
+            else { Win32.RemoveClipboardFormatListener(Handle); _listening = false; }
+        }
+    }
     protected override void WndProc(ref Message m)
     {
         if (m.Msg == Win32.WM_CLIPBOARDUPDATE)
@@ -71,7 +78,7 @@ public sealed class ClipboardWatcher : Form
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing && IsHandleCreated)
+        if (disposing && IsHandleCreated && _listening)
             Win32.RemoveClipboardFormatListener(Handle);
         base.Dispose(disposing);
     }

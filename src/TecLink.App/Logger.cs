@@ -30,6 +30,7 @@ internal static class Logger
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);
+            if (File.Exists(LogPath) && new FileInfo(LogPath).Length > 300_000) File.Delete(LogPath); // never grows without limit
             File.AppendAllText(LogPath, $"[{DateTime.Now:O}] {ex}\n\n");
         }
         catch

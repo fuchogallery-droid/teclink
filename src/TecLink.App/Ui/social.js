@@ -91,6 +91,7 @@
     api = options;
     $('update-check').onclick = () => { $('update-check').disabled = true; $('update-check').textContent = 'Buscando…'; api.send({ type: 'checkUpdate' }); };
     $('update-get').onclick = () => api.send({ type: 'openUrl', url: updateUrl });
+    $('share-clipboard').onclick = () => api.send({ type: 'setClipboard', on: $('share-clipboard').getAttribute('aria-checked') !== 'true' });
     $('profile-pick').onclick = () => $('profile-file').click();
     $('profile-file').onchange = e => { pickPhoto(e.target.files[0]); e.target.value = ''; };
     $('profile-remove').onclick = () => { photo = ''; paint($('profile-avatar'), '', $('profile-name').value); };

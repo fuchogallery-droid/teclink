@@ -151,9 +151,6 @@ public sealed partial class EdgeBridge : IDisposable
         Files.Status += text => StatusChanged?.Invoke(text);
         InitSuite();
         Files.Received += (items, folder) => ControlChanged?.Invoke($"Recibido de la otra PC: {items} archivo(s) en Descargas\\TecLink");
-        CursorStyler.Apply(_config.CursorStyle, _config.CursorSizePercent);
-        ApplyWindowsSpeed();
-
         _mouseHook.Move += OnMouseMove;
         _rawMouse.Move += OnRawMouseMove;
         _mouseHook.ButtonChanged += OnMouseButton;
@@ -208,10 +205,8 @@ public sealed partial class EdgeBridge : IDisposable
 
     public void InstallHooks()
     {
+        // Nothing is hooked here: the keyboard and mouse hooks are installed only while somebody is connected (ApplySystemEffects).
         StartWatchdog();
-        _rawMouse.Install();
-        _mouseHook.Install();
-        _keyboardHook.Install();
     }
 
     // ---- Sessions: invitation code, 10-screen limit and the "management" switch ----
@@ -424,7 +419,7 @@ public sealed partial class EdgeBridge : IDisposable
             _config.ScreenPositions = _config.ScreenPositions.Where(p => !p.Remote).ToList();
             try { _config.Save(); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Logger.LogError(ex); }
         }
-        _clipboard.BeginInvoke(() => { SwitchToLocal(force: true); ReleaseAllInjectedInput(); ViewerCloseRequested?.Invoke(); });
+        _clipboard.BeginInvoke(() => { SwitchToLocal(force: true); ReleaseAllInjectedInput(); ViewerCloseRequested?.Invoke(); ApplySystemEffects(); });
     }
 
     private void HandleJoin(PeerSlot slot, WireMessage msg)
@@ -547,6 +542,7 @@ public sealed partial class EdgeBridge : IDisposable
                 SwitchToLocal(force: true);
                 ReleaseAllInjectedInput();
                 ViewerCloseRequested?.Invoke();
+                ApplySystemEffects();
             });
             await connection.DisposeAsync();
 
@@ -637,8 +633,6 @@ public sealed partial class EdgeBridge : IDisposable
                     Reject(slot, $"Límite de {MaxScreens} pantallas por sesión: esta sesión ya tiene {LocalDisplays().Length} y la PC invitada trae {_remoteDisplays.Length}.");
                     break;
                 }
-                if (_peerExtras && _config.Role == PeerRole.Server)
-                    _ = _connection!.SendAsync(WireMessage.Pointer(_config.PointerSpeedLevel, _config.CursorStyle, _config.CursorSizePercent));
                 // In a session the owner's map rules: it is completed here (every screen placed, edges joined) and
                 // sent to the guest right away, so the mouse crosses without anyone having to press "save".
                 if (_sessionMode && _config.Role == PeerRole.Server) AdoptOwnerMap(); else RefreshSpatialRoutes();
@@ -648,6 +642,7 @@ public sealed partial class EdgeBridge : IDisposable
                 StatusChanged?.Invoke($"Vinculado con {_remoteName} ({_remoteWidth}x{_remoteHeight})");
                 SendProfile();
                 if (_config.Role == PeerRole.Server) BroadcastRoster();
+                ApplySystemEffects();
                 break;
             case MessageType.Profile:
                 HandleProfile(msg.Text);
@@ -681,7 +676,7 @@ public sealed partial class EdgeBridge : IDisposable
                 StatusChanged?.Invoke(_management ? "El anfitrión activó la gestión de pantallas" : "Gestión de pantallas apagada");
                 break;
             case MessageType.Leave:
-                _peerStatus = "left"; _remoteKnown = false;
+                _peerStatus = "left"; _remoteKnown = false; RefreshSystemEffects();
                 StatusChanged?.Invoke(_config.Role == PeerRole.Server ? $"{_remoteName} salió de la sesión." : $"{_remoteName} cerró la sesión.");
                 ControlChanged?.Invoke(_config.Role == PeerRole.Server ? $"{_remoteName} salió de la sesión" : $"{_remoteName} cerró la sesión");
                 RevokeManagement();
@@ -707,7 +702,8 @@ public sealed partial class EdgeBridge : IDisposable
                     StatusChanged?.Invoke("Windows rechazó entrada de teclado; revisa error.log");
                 break;
             case MessageType.ClipboardText:
-                _clipboard.ApplyRemoteText(msg.Text ?? "");
+                // Only if this person chose to share the clipboard; otherwise what the other PC copied never reaches it.
+                if (_config.ShareClipboard) _clipboard.ApplyRemoteText(msg.Text ?? "");
                 break;
             case MessageType.SwitchToRemote:
                 if (!ManagementAllowed) break;
@@ -767,9 +763,7 @@ public sealed partial class EdgeBridge : IDisposable
                 if (_mapRequests.TryGetValue(msg.RequestId ?? "", out var request)) request.TrySetResult(msg);
                 break;
             case MessageType.PointerSettings:
-                try { ApplyPointerSettings(msg.SpeedLevel, msg.CursorStyle, msg.CursorSizePercent, fromPeer: true); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Logger.LogError(ex); }
-                break;
+                break; // the other PC never changes how this one looks or feels (older versions did)
             case MessageType.ScreenStart:
                 if (ManagementAllowed && _connection is { } viewer)
                 {
@@ -1079,7 +1073,7 @@ public sealed partial class EdgeBridge : IDisposable
             pointerSpeed = CurrentSpeedLevel(), cursorStyle = CursorStyler.Normalize(_config.CursorStyle),
             cursorSize = CursorStyler.ClampSize(_config.CursorSizePercent), extras = CanUseExtras,
             transfer = Files.LastStatus, receiveFolder = Files.ReceiveFolder,
-            canArrange = CanArrange, shares = SharesView(), autoReceive = _config.AutoReceive, controlling = _viewInput,
+            canArrange = CanArrange, shares = SharesView(), autoReceive = _config.AutoReceive, shareClipboard = _config.ShareClipboard, controlling = _viewInput,
             local = local.OrderBy(d => order.Contains(d.Id) ? order.IndexOf(d.Id) : 1000 + Array.IndexOf(local, d)).Select(d => new
             {
                 id = d.Id, label = "Pantalla " + (Array.IndexOf(local, d) + 1), width = d.Width, height = d.Height,
@@ -1169,31 +1163,19 @@ public sealed partial class EdgeBridge : IDisposable
         return Win32.SystemParametersInfo(Win32.SPI_GETMOUSESPEED, 0, ref level, 0) ? PointerSpeed.Clamp(level) : PointerSpeed.Default;
     }
 
-    private void ApplyWindowsSpeed()
-    {
-        if (_config.PointerSpeedLevel <= 0) return;
-        var level = 0;
-        if (Win32.SystemParametersInfo(Win32.SPI_GETMOUSESPEED, 0, ref level, 0) && level == _config.PointerSpeedLevel) return;
-        Win32.SystemParametersInfo(Win32.SPI_SETMOUSESPEED, 0, new IntPtr(_config.PointerSpeedLevel), 3); // persist + notify
-    }
-
-    /// <summary>One speed and one pointer design for both PCs: stored and applied here
-    /// (Windows pointer speed, arrow design) and mirrored on the peer.</summary>
-    public void ApplyPointerSettings(int speedLevel, string? cursorStyle, int cursorSizePercent, bool fromPeer = false)
+    /// <summary>Speed (only for the mouse that controls the other PC, inside TecLink) and arrow design (worn only while connected).
+    /// They belong to this PC alone: they are never sent to the other PC and Windows' own mouse speed is never changed.</summary>
+    public void ApplyPointerSettings(int speedLevel, string? cursorStyle, int cursorSizePercent)
     {
         var previous = (_config.PointerSpeedLevel, _config.CursorStyle, _config.CursorSizePercent);
-        if (speedLevel > 0) _config.PointerSpeedLevel = PointerSpeed.Clamp(speedLevel); // 0 = the peer never chose one
+        if (speedLevel > 0) _config.PointerSpeedLevel = PointerSpeed.Clamp(speedLevel);
         _config.CursorStyle = CursorStyler.Normalize(cursorStyle);
         _config.CursorSizePercent = CursorStyler.ClampSize(cursorSizePercent);
         try { _config.Save(); }
         catch { (_config.PointerSpeedLevel, _config.CursorStyle, _config.CursorSizePercent) = previous; throw; }
-        CursorStyler.Apply(_config.CursorStyle, _config.CursorSizePercent);
-        ApplyWindowsSpeed();
-        if (!fromPeer && CanUseExtras)
-            _ = _connection!.SendAsync(WireMessage.Pointer(_config.PointerSpeedLevel, _config.CursorStyle, _config.CursorSizePercent));
-        if (fromPeer) StatusChanged?.Invoke("Ajustes del ratón recibidos de la otra PC.");
+        CursorStyler.Forget();
+        RefreshSystemEffects();
     }
-
     public void StartViewing(int displayIndex, int maxWidth, int maxHeight)
     {
         if (CanUseExtras && ManagementAllowed) _ = _connection!.SendAsync(WireMessage.ScreenStart(displayIndex, maxWidth, maxHeight));
@@ -1254,9 +1236,10 @@ public sealed partial class EdgeBridge : IDisposable
         _watchdog?.Dispose();
         _screenHost.Dispose(); _tilesForPeer.Dispose(); _tilesLocal.Dispose();
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
-        _mouseHook.Dispose();
+        ReleaseHooks();
         _rawMouse.Dispose();
-        _keyboardHook.Dispose();
+        CursorStyler.Restore();
+        _clipboard.Sharing = false;
     }
 
     private static Point ClampTo(Rectangle screen, Point point) => new(Math.Clamp(point.X, screen.Left, screen.Right - 1), Math.Clamp(point.Y, screen.Top, screen.Bottom - 1));

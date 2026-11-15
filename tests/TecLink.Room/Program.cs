@@ -115,6 +115,37 @@ Check(host2.MemberCount() == 10, "la sala se queda en 10 PCs");
 
 foreach (var p in many.Append(host2).Append(extra)) p.Cts.Cancel();
 await Task.Delay(1000);
+// ---------- Phase 3: what TecLink touches in Windows can be put on and taken off, over and over ----------
+Console.WriteLine("== Ganchos del sistema (se instalan y se retiran sin dejar nada) ==");
+{
+    var ok = OnUi<bool>(() =>
+    {
+        try
+        {
+            var mouse = new TecLink.App.Input.MouseHook(); var keys = new TecLink.App.Input.KeyboardHook(); var raw = new TecLink.App.Input.RawMouseInput();
+            for (var round = 0; round < 3; round++)
+            {
+                raw.Install(); mouse.Install(); keys.Install();
+                Application.DoEvents();
+                mouse.Dispose(); keys.Dispose(); raw.Uninstall();
+            }
+            raw.Dispose();
+            return true;
+        }
+        catch (Exception ex) { Console.WriteLine(ex); return false; }
+    });
+    Check(ok, "los ganchos del mouse, del teclado y el mouse crudo se instalan y se retiran 3 veces sin fallar");
+    var clipOk = OnUi<bool>(() =>
+    {
+        var clip = new ClipboardWatcher(); _ = clip.Handle;
+        clip.Sharing = true; var on = clip.Sharing; clip.Sharing = false; var off = !clip.Sharing; clip.Dispose();
+        return on && off;
+    });
+    Check(clipOk, "el portapapeles solo se escucha cuando se enciende y deja de escucharse al apagarlo");
+    var fresh = new AppConfig();
+    Check(!fresh.ShareClipboard && !fresh.AutoReceive, "de fábrica no se comparte el portapapeles ni se reciben archivos solos");
+}
+
 Console.WriteLine(failures == 0 ? $"PASS: {checks} comprobaciones de la sala multi-PC" : $"FALLÓ: {failures} de {checks}");
 Environment.Exit(failures == 0 ? 0 : 1);
 
@@ -144,6 +175,7 @@ static class Rig
         bridge.ChatReceived += (from, text) => { lock (peer.Chats) peer.Chats.Add((from, text)); };
         bridge.VoiceReceived += (id, pcm) => { lock (peer.Voice) peer.Voice.Add((id, pcm.Length)); };
         bridge.CameraFrameReceived += (id, frame) => { lock (peer.Cams) peer.Cams.Add((id, frame.Length)); };
+        bridge.SystemEffects = false; // a test never hooks the machine it runs on
         bridge.NetworkActive = true;
         peer.Run = Task.Run(() => bridge.RunNetworkingAsync(cts.Token));
         return peer;

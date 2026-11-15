@@ -70,7 +70,7 @@ public sealed class ControlPanelForm : Form
         // (it must never be captured in the background) and control resumes by itself when the panel is used again.
         Deactivate += (_, _) => { if (_tileControl) _bridge.SetViewInput(false); };
         Activated += (_, _) => { if (_tileControl) { _bridge.SetViewInput(true); RefreshState(); } };
-        VisibleChanged += (_, _) => { if (!Visible) _bridge.WatchScreens(false, 0); else Post(new { type = "shown" }); };
+        VisibleChanged += (_, _) => { if (!Visible) { _bridge.WatchScreens(false, 0); SleepPanelIfIdle(); } else { ResumePanel(); Post(new { type = "shown" }); } };
         Shown += async (_, _) => await InitializeAsync();
         FormClosing += (_, e) => { if (!_shutdown && e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; Hide(); } };
     }
@@ -227,6 +227,7 @@ public sealed class ControlPanelForm : Form
                     if (wanted.StartsWith("https://github.com/fuchogallery-droid/teclink/releases", StringComparison.Ordinal))
                         System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(wanted) { UseShellExecute = true });
                     break;
+                case "setClipboard": _bridge.SetShareClipboard(root.GetProperty("on").GetBoolean()); RefreshState(); break;
                 case "useMouse": _bridge.UseMouseWith(root.GetProperty("id").GetString() ?? ""); break;
                 case "kickGuest": _bridge.KickGuest(root.GetProperty("id").GetString() ?? ""); break;
                 case "roomFullscreen": SetRoomFullscreen(root.GetProperty("on").GetBoolean()); break;
@@ -297,7 +298,29 @@ public sealed class ControlPanelForm : Form
         { Post(new { type = "error", message = ex.Message }); }
     }
 
-    private void Post(object message) { if (_ready && !_web.IsDisposed) _web.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(message, Json)); }
+    private bool _suspended;
+
+    private void Post(object message)
+    {
+        if (!_ready || _web.IsDisposed) return;
+        ResumePanel();
+        _web.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(message, Json));
+    }
+
+    /// <summary>With the window hidden and nobody connected the panel's web engine is put to sleep (no timers, no CPU);
+    /// it wakes up the instant something has to be shown.</summary>
+    private void SleepPanelIfIdle()
+    {
+        if (!_ready || _web.IsDisposed || _suspended || Visible || _bridge.HasPeerConnected) return;
+        try { _ = _web.CoreWebView2.TrySuspendAsync(); _suspended = true; } catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException) { }
+    }
+
+    private void ResumePanel()
+    {
+        if (!_suspended) return;
+        try { _web.CoreWebView2.Resume(); } catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException) { }
+        _suspended = false;
+    }
     private FormBorderStyle _borderBefore; private FormWindowState _stateBefore; private bool _roomFull;
 
     /// <summary>The whole panel window covers its monitor while the room is shown full screen; everything is restored afterwards.</summary>

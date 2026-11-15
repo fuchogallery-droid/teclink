@@ -10,6 +10,7 @@ internal static class CursorStyler
 {
     public static readonly string[] Styles = { "system", "white", "black", "green", "red" };
     private static bool _custom;
+    private static string? _appliedKey;
 
     private static readonly System.Text.RegularExpressions.Regex HexColor = new("^#[0-9a-fA-F]{6}$");
 
@@ -22,6 +23,8 @@ internal static class CursorStyler
     {
         style = Normalize(style);
         if (style == "system") { Restore(); return; }
+        var key = style + "|" + ClampSize(sizePercent);
+        if (_custom && key == _appliedKey) return; // already wearing exactly this design
         var (fill, edge) = style switch
         {
             "white" => (Color.White, Color.Black),
@@ -56,7 +59,7 @@ internal static class CursorStyler
                 Win32.DeleteObject(info.hbmColor);
                 Win32.DeleteObject(info.hbmMask);
                 // SetSystemCursor takes ownership of the handle.
-                if (cursor != IntPtr.Zero && Win32.SetSystemCursor(cursor, Win32.OCR_NORMAL)) _custom = true;
+                if (cursor != IntPtr.Zero && Win32.SetSystemCursor(cursor, Win32.OCR_NORMAL)) { _custom = true; _appliedKey = key; }
             }
             finally { Win32.DestroyIcon(icon); }
         }
@@ -71,11 +74,14 @@ internal static class CursorStyler
         return (fill, luminance > 140 ? Color.Black : Color.White);
     }
 
+    /// <summary>The design changed: the next Apply must draw it again.</summary>
+    public static void Forget() => _appliedKey = null;
+
     /// <summary>Reloads the pointers configured in Windows.</summary>
     public static void Restore()
     {
         if (!_custom) return;
         Win32.SystemParametersInfo(Win32.SPI_SETCURSORS, 0, IntPtr.Zero, 0);
-        _custom = false;
+        _custom = false; _appliedKey = null;
     }
 }

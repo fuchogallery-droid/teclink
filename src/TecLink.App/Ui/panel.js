@@ -133,7 +133,8 @@
     document.querySelectorAll('.swatch').forEach(b => b.setAttribute('aria-checked', b.dataset.style === chosenStyle ? 'true' : 'false'));
     if (/^#[0-9a-f]{6}$/i.test(chosenStyle)) $('color-mouse').value = chosenStyle;
     $('cursor-size').disabled = chosenStyle === 'system';
-    $('mouse-sync').textContent = extras ? 'Sincronizado con la otra PC.' : 'La otra PC no está conectada o necesita esta versión de TecLink: por ahora los cambios se guardan solo aquí.';
+    $('mouse-sync').textContent = 'Estos ajustes son solo de esta PC. La velocidad actúa solo cuando manejas la otra PC desde TecLink, y la flecha se cambia únicamente mientras hay alguien conectado: al desconectarte, Windows recupera la suya.';
+    const clip = $('share-clipboard'); if (clip) clip.setAttribute('aria-checked', !!state.shareClipboard);
     $('peer-sync').textContent = extras ? '' : 'Conecta la otra PC con esta misma versión de TecLink para compartir archivos.';
     ['pick-files', 'pick-folder'].forEach(id => $(id).disabled = !extras);
     $('auto-receive').setAttribute('aria-pressed', state.autoReceive !== false); $('auto-receive').classList.toggle('on', state.autoReceive !== false); $('auto-receive').querySelector('span').textContent = state.autoReceive !== false ? 'Recibir solo: sí' : 'Recibir solo: no';

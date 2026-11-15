@@ -108,8 +108,8 @@ public sealed class TrayAppContext : ApplicationContext
         if (!on) _bridge.AnnounceLeave();
         _bridge.Powered = on;
         _powerItem.Checked = on;
-        if (on) CursorStyler.Apply(_config.CursorStyle, _config.CursorSizePercent); // stays disconnected: the user decides when to connect
-        else { StopNetworking(); CursorStyler.Restore(); }
+        if (!on) StopNetworking(); // on: stays disconnected, the user decides when to connect
+        _bridge.RefreshSystemEffects();
         OnControlChanged(on ? "TecLink encendido" : "TecLink apagado");
         _panel?.RefreshState();
     }
@@ -129,6 +129,8 @@ public sealed class TrayAppContext : ApplicationContext
 
     private void OnControlChanged(string message)
     {
+        // Windows notifications are rare on purpose: only when somebody asks to come in or sends you files. Handing the mouse back and forth is silent.
+        if (!message.Contains("pide entrar") && !message.StartsWith("Recibido")) return;
         _clipboard.BeginInvoke(() => _trayIcon.ShowBalloonTip(1500, "TecLink", message, ToolTipIcon.Info));
     }
 

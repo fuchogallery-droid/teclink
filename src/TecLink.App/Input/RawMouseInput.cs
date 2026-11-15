@@ -8,12 +8,14 @@ namespace TecLink.App.Input;
 public sealed class RawMouseInput : NativeWindow, IDisposable
 {
     private readonly Dictionary<IntPtr, Point> _absolutePositions = new();
-    private readonly IntPtr _buffer = Marshal.AllocHGlobal(Marshal.SizeOf<Win32.RAWINPUTMOUSE>());
+    private IntPtr _buffer;
     private bool _installed;
     public event Action<int, int>? Move;
 
     public void Install()
     {
+        if (_installed) return;
+        _buffer = Marshal.AllocHGlobal(Marshal.SizeOf<Win32.RAWINPUTMOUSE>());
         CreateHandle(new CreateParams { Caption = "TecLink raw input", Parent = new IntPtr(-3) });
         var device = new Win32.RAWINPUTDEVICE { UsagePage = 1, Usage = 2, Flags = Win32.RIDEV_INPUTSINK, Target = Handle };
         if (!Win32.RegisterRawInputDevices(new[] { device }, 1, (uint)Marshal.SizeOf<Win32.RAWINPUTDEVICE>()))
@@ -54,14 +56,17 @@ public sealed class RawMouseInput : NativeWindow, IDisposable
         base.WndProc(ref message);
     }
 
-    public void Dispose()
+    /// <summary>Stops listening to the mouse entirely (and can be installed again later).</summary>
+    public void Uninstall()
     {
-        if (_installed)
-        {
-            var device = new Win32.RAWINPUTDEVICE { UsagePage = 1, Usage = 2, Flags = Win32.RIDEV_REMOVE };
-            Win32.RegisterRawInputDevices(new[] { device }, 1, (uint)Marshal.SizeOf<Win32.RAWINPUTDEVICE>());
-        }
+        if (!_installed) return;
+        var device = new Win32.RAWINPUTDEVICE { UsagePage = 1, Usage = 2, Flags = Win32.RIDEV_REMOVE };
+        Win32.RegisterRawInputDevices(new[] { device }, 1, (uint)Marshal.SizeOf<Win32.RAWINPUTDEVICE>());
         DestroyHandle();
-        Marshal.FreeHGlobal(_buffer);
+        Marshal.FreeHGlobal(_buffer); _buffer = IntPtr.Zero;
+        _absolutePositions.Clear();
+        _installed = false;
     }
+
+    public void Dispose() => Uninstall();
 }

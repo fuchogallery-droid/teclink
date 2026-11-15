@@ -41,7 +41,9 @@ public sealed class AppConfig
     public string CursorStyle { get; set; } = "system";
     public int CursorSizePercent { get; set; } = 100;
     /// <summary>Files shared with the session are copied to this PC's TecLink folder as soon as they are shared.</summary>
-    public bool AutoReceive { get; set; } = true;
+    public bool AutoReceive { get; set; }
+    /// <summary>Off by default: TecLink never copies the clipboard between PCs unless the person asks for it.</summary>
+    public bool ShareClipboard { get; set; }
     /// <summary>How this person wants to be called in rooms (empty = the computer name). Lives only on this PC.</summary>
     public string DisplayName { get; set; } = "";
     /// <summary>Small round picture (data:image/jpeg;base64,...) shown to the people in the room. Lives only on this PC.</summary>

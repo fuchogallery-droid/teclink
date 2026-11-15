@@ -126,12 +126,14 @@ public sealed partial class EdgeBridge
                 ViewerCloseRequested?.Invoke();
                 if (!shuttingDown && Joined().FirstOrDefault(s => s.Known) is { } next) SwitchActive(next);
                 BroadcastRoster();
+                ApplySystemEffects();
             });
         }
         else if (!shuttingDown)
         {
             if (slot.Joined) { AddEvent($"{slot.Name} salió de la sala."); StatusChanged?.Invoke($"{slot.Name} salió de la sala."); }
             BroadcastRoster();
+            RefreshSystemEffects();
         }
         if (connection is not null) { try { await connection.DisposeAsync(); } catch (Exception) { } }
     }
@@ -202,7 +204,6 @@ public sealed partial class EdgeBridge
             Notice?.Invoke($"Límite de {MaxScreens} pantallas: {target.Name} trae {target.Displays.Length} y esta PC {LocalDisplays().Length}.");
         }
         _ = conn.SendAsync(WireMessage.Management(_management));
-        if (target.Extras) _ = conn.SendAsync(WireMessage.Pointer(_config.PointerSpeedLevel, _config.CursorStyle, _config.CursorSizePercent));
         _rx = target;
         try
         {
@@ -356,6 +357,7 @@ public sealed partial class EdgeBridge
                 RemoveDuplicates(slot);
                 if (ReferenceEquals(_active, slot)) { HandleMessage(slot, msg); return; } // it replaced the active PC that had died silently
                 if (slot.Connection is { } c) { _ = c.SendAsync(WireMessage.Management(false)); SendProfileTo(c); }
+                RefreshSystemEffects();
                 AddEvent($"{slot.Name} entró a la sala.");
                 Notice?.Invoke($"{slot.Name} entró a la sala. Usa «Usar el mouse con esta PC» para controlarla.");
                 BroadcastRoster();
@@ -365,7 +367,7 @@ public sealed partial class EdgeBridge
                 BroadcastRoster();
                 break;
             case MessageType.Leave:
-                slot.Status = "left"; slot.Known = false;
+                slot.Status = "left"; slot.Known = false; RefreshSystemEffects();
                 StatusChanged?.Invoke($"{slot.Name} salió de la sala.");
                 break;
             case MessageType.SwitchToRemote:
