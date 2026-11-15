@@ -388,3 +388,7 @@ body.cinema .chat-tools #tool-mouse{grid-column:span 2}body.cinema .chat-tools #
 @media(max-width:620px){.mode-grid{grid-template-columns:1fr}}
 #control-scrim{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:96}
 #control-ask{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(440px,calc(100vw - 24px));background:var(--panel);border:1px solid var(--accent);border-radius:14px;padding:22px;z-index:97;display:flex;flex-direction:column;gap:12px;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+.room-session{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;padding:14px 18px;margin:0 0 12px}
+.room-session .rs-text{display:flex;flex-direction:column;gap:2px;min-width:200px}
+.room-session .rs-text span{color:var(--muted,#8a94a6);font-size:14px}
+.room-session button{min-height:44px;padding:0 18px}

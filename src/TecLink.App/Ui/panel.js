@@ -152,23 +152,24 @@
     let dot = 'off', title = '', sub = '', main = null, alt = null;
     const idle = state.netMode === 'idle';
     if (!on) { title = 'TecLink está apagado'; sub = 'No comparte mouse ni teclado.'; main = { label: 'Encender', act: () => send({ type: 'setPower', on: true }) }; }
-    else if (idle) { dot = 'off'; title = 'Sin conexión'; sub = 'TecLink no está conectado a nadie. Tú decides cuándo conectar.'; main = { label: 'Invitar a alguien', act: () => { send({ type: 'session', action: 'open' }); document.querySelector('[data-tab=connection]').click(); } }; alt = { label: 'Conectar con un código', act: () => { document.querySelector('[data-tab=connection]').click(); setTimeout(() => $('join-code').focus(), 50); } }; }
+    else if (idle) { dot = 'off'; title = 'Sin conexión'; sub = 'TecLink no está conectado a nadie. Tú decides cuándo conectar.'; main = { label: 'Abrir mi sala e invitar', act: () => { send({ type: 'session', action: 'open' }); document.querySelector('[data-tab=room]').click(); } }; alt = { label: 'Conectar con un código', act: () => { document.querySelector('[data-tab=connection]').click(); setTimeout(() => $('join-code').focus(), 50); } }; }
     else if (!state.connected) {
       const gone = state.peerStatus === 'left' ? `${name} salió de la sesión` : state.peerStatus === 'lost' ? `${name} se desconectó` : '';
-      if (!host && state.joinCode && !gone) { dot = 'warn'; title = 'Buscando la sesión…'; sub = state.joinNotice || 'La otra PC debe tener TecLink abierto en esta misma red.'; main = { label: 'Cancelar', act: () => send({ type: 'session', action: 'stop' }) }; }
-      else { dot = gone ? 'bad' : 'ok'; title = gone || 'Sesión abierta: esperando a la otra PC'; sub = `Tu código: ${state.sessionCode || '—'}. Escríbelo en la otra PC.`; main = { label: 'Cerrar mi sesión', act: () => send({ type: 'session', action: 'stop' }) }; }
-    } else if (state.mode === 'remote') { dot = 'live'; title = `Estás controlando la PC de ${name}`; sub = 'Tu mouse y tu teclado están en la otra PC.'; main = { label: 'Volver a mi PC', act: () => send({ type: 'toggleControl' }) }; }
+      if (!host && state.joinCode && !gone) { dot = 'warn'; title = 'Buscando la sesión…'; sub = state.joinNotice || 'La otra PC debe tener TecLink abierto y la sala abierta. Si está en otra red, usa la invitación en línea.'; main = { label: 'Ver mi sala', act: () => document.querySelector('[data-tab=room]').click() }; }
+      else { dot = gone ? 'bad' : 'ok'; title = gone || 'Sala abierta: esperando a la otra PC'; sub = `Tu código: ${state.sessionCode || '—'}. Escríbelo en la otra PC.`; main = { label: 'Ver mi sala', act: () => document.querySelector('[data-tab=room]').click() }; }
+    } else if (state.mode === 'remote') { dot = 'live'; title = `Tu mouse y tu teclado están en la PC de ${name}`; sub = 'Para recuperarlos pulsa «Liberar mouse y teclado», o lleva el mouse al borde de vuelta.'; main = null; }
     else if (state.control?.controlledBy) { dot = 'live'; title = ` está controlando tu PC`; sub = 'Tú decides: puedes detenerlo en cualquier momento.'; main = { label: 'Detener control', act: () => send({ type: 'controlEnd' }) }; }
     else if (state.control?.iControl) { dot = 'live'; title = `Estás controlando la PC de ${name}`; sub = 'Se abrió su pantalla en otra ventana. Pulsa Esc o aquí para dejar de controlar.'; main = { label: 'Dejar de controlar', act: () => send({ type: 'controlEnd' }) }; }
     else if (state.mode === 'peer') { dot = 'live'; title = `${name} está controlando esta PC`; sub = 'Tu mouse sigue funcionando: muévelo cuando quieras o recupera el control.'; main = { label: 'Recuperar mi mouse', act: () => send({ type: 'freeInput' }) }; }
-    else if (state.control && !state.control.own) { dot = 'ok'; title = `Conectado con ${name}`; sub = state.control.pending ? `Esperando que ${name} permita el control…` : 'Sala con otras personas: chatean, hablan y se ven. Para ver o manejar su PC pulsa «Controlar PC»: la otra persona debe permitirlo.'; main = { label: state.control.pending ? 'Esperando permiso…' : 'Controlar PC', act: () => controlPc() }; }
+    else if (state.control && !state.control.own) { dot = 'ok'; title = `Conectado con ${name}`; sub = state.control.pending ? `Esperando que ${name} permita el control…` : 'Sala con otras personas: chatean, hablan y se ven. Para manejar su PC pulsa «Controlar mouse y teclado»: la otra persona debe permitirlo.'; main = { label: state.control.pending ? 'Esperando permiso…' : 'Controlar mouse y teclado', act: () => controlPc() }; }
     else if (state.sessionMode && !state.management) { dot = 'warn'; title = `Conectado con ${name}: el mouse NO pasa todavía`; sub = host ? 'Activa la gestión de pantallas para mover el mouse entre las dos PCs.' : 'El anfitrión debe activar la gestión de pantallas.'; main = host ? { label: 'Activar gestión', act: () => send({ type: 'setManagement', on: true }) } : null; }
-    else { dot = 'ok'; title = `Conectado con ${name}`; sub = 'Lleva el mouse al borde donde las pantallas se tocan, o pulsa «Controlar PC» para ver y manejar la otra PC con tu mouse y tu teclado.'; main = { label: 'Controlar PC', act: () => controlPc() }; }
+    else { dot = 'ok'; title = `Conectado con ${name}`; sub = 'Pulsa «Controlar mouse y teclado» para pasar a la otra PC, o lleva el mouse al borde donde las pantallas se tocan. «Liberar mouse y teclado» te los devuelve.'; main = { label: 'Controlar mouse y teclado', act: () => send({ type: 'toggleControl' }) }; }
     $('sb-dot').className = 'sb-dot ' + dot; $('sb-title').textContent = title; $('sb-sub').textContent = sub;
     const b = $('sb-main'); b.hidden = !main; if (main) { b.textContent = main.label; b.onclick = main.act; }
-    if (!alt && !idle && on) alt = { label: host ? 'Cerrar mi sesión' : 'Salir de la sesión', act: () => send({ type: 'session', action: 'stop' }) };
-    if (alt && main && (alt.label === main.label || main.label === 'Cancelar')) alt = null;
     const a = $('sb-alt'); a.hidden = !alt; if (alt) { a.textContent = alt.label; a.onclick = alt.act; }
+    // Mouse y teclado: los dos botones de arriba siempre a la vista cuando hay otra PC conectada.
+    const linked = on && !!state.connected, free = $('sb-free');
+    free.hidden = !linked; free.disabled = !linked; free.textContent = 'Liberar mouse y teclado';
   }
   $('sb-free').onclick = () => { send({ type: 'freeInput' }); toast('Mouse y teclado liberados en esta PC.'); };
   // ---- Salida de la otra PC: aviso y suite vacia ----
@@ -280,9 +281,15 @@
     if (document.activeElement !== $('join-code') && guest) $('join-code').value = state.joinCode || '';
     $('leave-btn').hidden = host; $('leave-btn').textContent = legacy ? 'Abrir mi propia sesión' : 'Salir de la sesión';
     $('join-btn').hidden = guest; $('join-code').disabled = guest;
+    // Mi sala: abrir, invitar, cerrar o salir viven aquí, en la sección Sala (no en la barra de arriba).
+    const inRoom = state.netMode !== 'idle', hostingNow = host && inRoom, guestIn = !host && !legacy && inRoom;
+    $('rs-title').textContent = !on ? 'TecLink está apagado' : hostingNow ? (state.connected ? `Tu sala está abierta · ${state.remoteName || 'otra PC'} adentro` : `Tu sala está abierta · código ${state.sessionCode || '—'}`) : guestIn ? (state.connected ? `Estás en la sala de ${state.remoteName || 'la otra PC'}` : 'Entrando a la sala…') : 'No estás en ninguna sala';
+    $('rs-sub').textContent = hostingNow ? 'Cierra tu sala cuando termines: nadie más podrá entrar.' : guestIn ? 'Puedes salir cuando quieras; la sala sigue abierta para los demás.' : host || legacy ? 'Ábrela para invitar a otra PC o a otras personas.' : '';
+    $('rs-open').hidden = !(on && host && !inRoom); $('rs-close').hidden = !hostingNow; $('rs-leave').hidden = !guestIn; $('rs-copy').hidden = !hostingNow;
     $('join-notice').textContent = state.joinNotice || (!host && !state.connected && state.joinCode ? 'Buscando la sesión en tu red…' : !host && state.connected ? `Conectado a la sesión de ${state.remoteName || 'la otra PC'}.` : '');
     const m = !!state.management, sw = $('management');
-    sw.hidden = legacy; $('management-note').hidden = legacy;
+    const ownRoom = state.control?.own !== false; // en «Mis computadoras» no hay nada que activar
+    sw.hidden = legacy || ownRoom; $('management-note').hidden = legacy || ownRoom;
     sw.setAttribute('aria-checked', m); sw.disabled = !host || !on;
     $('management-label').textContent = host ? `Gestión de pantallas: ${m ? 'activada' : 'apagada'}` : `Gestión: ${m ? 'activada por el anfitrión' : 'la decide el anfitrión'}`;
     $('management-note').textContent = m ? 'Ambas PCs pueden ver y controlar las pantallas de la sesión.' : 'Las pantallas se suman al mapa, pero nadie las ve ni las controla hasta que el anfitrión active este interruptor.';
@@ -343,6 +350,10 @@
   $('leave-btn').onclick = () => send({ type: 'session', action: 'stop' });
   $('open-session').onclick = () => send({ type: 'session', action: 'open' });
   $('close-session').onclick = () => send({ type: 'session', action: 'stop' });
+  $('rs-open').onclick = () => { send({ type: 'session', action: 'open' }); toast('Abriendo tu sala…'); };
+  $('rs-close').onclick = () => { send({ type: 'session', action: 'stop' }); toast('Cerraste tu sala.'); };
+  $('rs-leave').onclick = () => { send({ type: 'session', action: 'stop' }); toast('Saliste de la sala.'); };
+  $('rs-copy').onclick = () => { const m = state?.online?.message; if (m) copyText(m, 'Invitación copiada: pégala en WhatsApp, correo o donde quieras.'); else $('copy-code').click(); };
   let pointerBusy = false, pointerTimer, chosenStyle = 'system';
   function sendPointer() {
     pointerBusy = true; clearTimeout(pointerTimer);
