@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
@@ -14,6 +14,7 @@ public sealed class ControlPanelForm : Form
     private readonly Func<string> _status;
     private readonly Action _openViewer;
     private readonly Func<bool> _uninstall;
+    private readonly Func<string, bool> _installUpdate;
     private bool _ready;
     private bool _shutdown;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
@@ -45,9 +46,9 @@ public sealed class ControlPanelForm : Form
     private readonly Action _controlOffHandler;
     private bool _tileControl;
 
-    public ControlPanelForm(EdgeBridge bridge, Func<string> status, Action openViewer, Action<bool> setPower, Action<string, string?, string?> session, Action<bool, string?> fullScreen, Func<bool> uninstall)
+    public ControlPanelForm(EdgeBridge bridge, Func<string> status, Action openViewer, Action<bool> setPower, Action<string, string?, string?> session, Action<bool, string?> fullScreen, Func<bool> uninstall, Func<string, bool> installUpdate)
     {
-        _uninstall = uninstall;
+        _uninstall = uninstall; _installUpdate = installUpdate;
         _bridge = bridge; _status = status; _openViewer = openViewer; _setPower = setPower; _session = session; _fullScreen = fullScreen;
         Text = $"TecLink {AppInfo.VersionText} — pantallas y salidas";
         Icon = TrayAppContext.AppIcon;
@@ -245,13 +246,46 @@ public sealed class ControlPanelForm : Form
                         if (!IsDisposed && IsHandleCreated) BeginInvoke(() => Post(result));
                     });
                     break;
+                case "updateCheck":
+                    _ = Task.Run(async () =>
+                    {
+                        var info = await Updater.CheckAsync();
+                        var key = _bridge.UpdateKey;
+                        var result = new { type = "upd", phase = "checked", ok = info.Ok, newer = info.Newer, latest = info.Latest, current = info.Current, enabled = info.Enabled, message = info.Message, buyUrl = info.BuyUrl, needKey = info.NeedKey, keyOk = Updater.KeyAccepted(info, key), size = info.Size };
+                        if (!IsDisposed && IsHandleCreated) BeginInvoke(() => Post(result));
+                    });
+                    break;
+                case "updateApply":
+                    {
+                        var typedKey = root.TryGetProperty("key", out var keyText) ? keyText.GetString() ?? "" : "";
+                        _ = Task.Run(async () =>
+                        {
+                            void Say(object o) { if (!IsDisposed && IsHandleCreated) BeginInvoke(() => Post(o)); }
+                            try
+                            {
+                                var info = await Updater.CheckAsync();
+                                if (!info.Ok) { Say(new { type = "upd", phase = "error", message = "No se pudo consultar. Revisa tu conexión a internet." }); return; }
+                                if (!info.Enabled) { Say(new { type = "upd", phase = "error", message = string.IsNullOrWhiteSpace(info.Message) ? "Las actualizaciones están en pausa por ahora." : info.Message }); return; }
+                                if (!info.Newer) { Say(new { type = "upd", phase = "error", message = "Ya tienes la versión más reciente." }); return; }
+                                if (!Updater.KeyAccepted(info, typedKey.Length > 0 ? typedKey : _bridge.UpdateKey)) { Say(new { type = "upd", phase = "key", message = "Esta actualización necesita una clave válida." }); return; }
+                                if (typedKey.Length > 0) _bridge.UpdateKey = typedKey;
+                                var path = await Updater.DownloadAsync(info, pct => Say(new { type = "upd", phase = "progress", percent = pct }));
+                                Say(new { type = "upd", phase = "installing", latest = info.Latest });
+                                await Task.Delay(800);
+                                if (!IsDisposed && IsHandleCreated) BeginInvoke(() => { if (!_installUpdate(path)) Post(new { type = "upd", phase = "error", message = "No se pudo iniciar el instalador. Está en: " + path }); });
+                            }
+                            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException or InvalidDataException or UnauthorizedAccessException)
+                            { Say(new { type = "upd", phase = "error", message = ex is InvalidDataException ? ex.Message : "La descarga falló. Inténtalo de nuevo." }); }
+                        });
+                    }
+                    break;
                 case "uninstall":
                     // The uninstaller of Windows asks once more by itself; TecLink only closes after launching it.
                     if (!_uninstall()) Post(new { type = "toast", message = "TecLink no se instaló con el instalador, así que aquí no hay desinstalador. Si lo quieres quitar, hazlo desde Configuración de Windows → Aplicaciones." });
                     break;
                 case "openUrl":
                     var wanted = root.GetProperty("url").GetString() ?? "";
-                    if (wanted.StartsWith("https://github.com/fuchogallery-droid/teclink/releases", StringComparison.Ordinal))
+                    if (wanted.StartsWith("https://github.com/fuchogallery-droid/teclink/releases", StringComparison.Ordinal) || wanted.StartsWith("https://technocrazy.org", StringComparison.Ordinal))
                         System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(wanted) { UseShellExecute = true });
                     break;
                 case "setOnline":

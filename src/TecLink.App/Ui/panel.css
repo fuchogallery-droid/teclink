@@ -392,3 +392,10 @@ body.cinema .chat-tools #tool-mouse{grid-column:span 2}body.cinema .chat-tools #
 .room-session .rs-text{display:flex;flex-direction:column;gap:2px;min-width:200px}
 .room-session .rs-text span{color:var(--muted,#8a94a6);font-size:14px}
 .room-session button{min-height:44px;padding:0 18px}
+#up-pop{position:fixed;top:72px;right:18px;width:min(400px,calc(100vw - 24px));background:var(--panel);border:1px solid var(--line);border-radius:12px;z-index:93;box-shadow:0 14px 40px rgba(0,0,0,.5)}
+#up-pop[hidden]{display:none}
+#up-pop .file-actions{padding:0}
+#up-pop .notif-list{display:flex;flex-direction:column;gap:10px}
+.up-bar{height:8px;border-radius:6px;background:var(--line);overflow:hidden}
+.up-bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
+.rs-ctx{display:contents}

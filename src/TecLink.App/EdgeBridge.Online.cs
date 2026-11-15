@@ -57,6 +57,8 @@ public sealed partial class EdgeBridge
         if (_config.OnlineSecret.Length != OnlineInvite.SecretLength) _config.OnlineSecret = OnlineInvite.NewSecret();
     }
 
+    public string UpdateKey { get => _config.UpdateKey; set { _config.UpdateKey = (value ?? "").Trim(); Save(); } }
+
     private void Save()
     {
         try { _config.Save(); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Logger.LogError(ex); }
