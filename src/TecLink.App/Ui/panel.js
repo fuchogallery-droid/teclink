@@ -27,7 +27,7 @@
     if (message.type === 'myFiles' || message.type === 'peerFiles') return;
     if (message.type === 'chat') { TecChat.incoming(message.from, message.text, message.at); return; }
     if (message.type === 'voice') { TecChat.voice(message.data, message.id); return; }
-    if (message.type === 'diagnostic') { $('diag-out').textContent = message.lines.join('\n'); $('diag-out').hidden = false; $('diag-run').disabled = false; $('diag-run').textContent = 'Probar conexión'; $('diag-copy').hidden = false; return; }
+    if (message.type === 'diagnostic') { $('diag-out').textContent = message.lines.join('\n'); $('diag-box').hidden = false; $('diag-out').hidden = false; $('diag-run').disabled = false; $('diag-run').textContent = 'Probar conexión'; $('diag-copy').hidden = false; return; }
     if (message.type === 'toast') { toast(message.message); return; }
     if (message.type === 'error') { saving = false; dirty = true; toast(message.message); update(); return; }
     if (!message.state) return;
@@ -36,7 +36,7 @@
     // adopta el que la app completo sola (al conectarse alguien) mientras no tenga cambios a medias.
     const saved = message.type === 'saved';
     if (!draft || saved || !state.canArrange || (!dirty && !drag && !saving)) {
-      draft = { placements: state.placements?.length ? structuredClone(state.placements) : M.defaults(state), automatic: draft && !saved ? draft.automatic : state.automatic, theme: draft && !saved ? draft.theme : state.theme || 'system' };
+      draft = { placements: state.placements?.length ? structuredClone(state.placements) : M.defaults(state), automatic: true, theme: draft && !saved ? draft.theme : state.theme || 'system' };
       dirty = false; if (saved) { saving = false; if (message.message && message.message !== lastSavedToast) toast(message.message); lastSavedToast = message.message; }
     }
     {
@@ -45,7 +45,9 @@
       for (const screen of screens) if (!draft.placements.some(p => M.key(p) === M.key(screen))) { draft.placements.push(defaults.find(p => M.key(p) === M.key(screen))); if (state.canArrange && !state.connected) dirty = true; }
     }
     if (!selected || !rects().some(s => M.key(s) === selected)) selected = M.key(rects()[0] || { id: '', remote: false });
-    $('automatic').checked = draft.automatic; $('theme').value = draft.theme; theme(); buildNodes(); update(); fit();
+    // El cruce siempre es automatico mientras TecLink esta encendido: si una configuracion vieja lo tenia apagado, se corrige sola.
+    if (state.canArrange && state.automatic === false && !saving) { draft.automatic = true; dirty = true; autoSave(); }
+    $('theme').value = draft.theme; theme(); buildNodes(); update(); fit();
   }
   let lastSavedToast = '', autoTimer;
   // El dueno no tiene que acordarse de guardar: cada cambio valido del mapa se aplica solo en las dos PCs.
@@ -110,22 +112,15 @@
     $('map-warning').textContent = overlaps ? 'Las pantallas se superponen. Sepáralas antes de guardar.' : contacts.length ? 'La línea verde marca cada paso del ratón.' : 'Sin rutas: acerca los bordes de dos pantallas para unirlas.';
     const arrange = state.canArrange !== false;
     $('sync-message').textContent = !arrange ? 'Eres invitado: el dueño de la sala ordena las pantallas y tu mapa se ajusta solo.' : state.connected ? 'Cada cambio se aplica solo en las dos PCs.' : 'Cuando alguien se una, sus pantallas se suman solas a la derecha.';
-    $('screens-lead').textContent = arrange ? 'Ordena las pantallas, sus números y su posición. Donde dos pantallas se tocan (línea verde) pasa el mouse.' : 'El dueño de la sala ordena las pantallas. Donde dos pantallas se tocan (línea verde) pasa el mouse.';
-    $('settings-title').textContent = s ? `${s.label || 'Pantalla'} · ${s.remote ? 'Otra PC' : 'Esta PC'}` : 'Elige una pantalla';
-    $('selected-size').textContent = s ? `${s.remote ? state.remoteName || 'Otra PC' : state.machineName} · ${s.width} × ${s.height}` : 'Conecta una pantalla.';
-    if (s) { if (document.activeElement !== $('position-x')) $('position-x').value = s.x; if (document.activeElement !== $('position-y')) $('position-y').value = s.y; }
-    $('routes-list').replaceChildren();
-    contacts.filter(c => M.key(c.a) === selected || M.key(c.b) === selected).forEach(c => { const first = M.key(c.a) === selected, target = first ? c.b : c.a, side = first ? c.side : opposite[c.side], li = document.createElement('li'); li.textContent = `${names[side]} ↔ ${names[opposite[side]]} · ${target.remote ? state.remoteName || 'Otra PC' : 'Esta PC'} / ${target.label || 'Pantalla'}`; $('routes-list').append(li); });
-    if (!$('routes-list').children.length) { const li = document.createElement('li'); li.textContent = 'Sin bordes unidos.'; $('routes-list').append(li); }
+    $('screens-lead').textContent = arrange ? 'Ordena tus pantallas. Donde dos se tocan (línea verde) pasa el mouse. Cada PC conserva su propia configuración.' : 'El dueño de la sala ordena las pantallas. Donde dos se tocan (línea verde) pasa el mouse.';
     const removed = draft.placements.filter(p => p.hidden).length, admin = state.role === 'Server';
     $('restore-screens').hidden = !removed || !admin; $('restore-screens').textContent = `Restaurar pantallas quitadas (${removed})`;
-    $('remove-screen').disabled = !(admin && s && s.remote && state.connected) || saving;
-    $('remove-note').textContent = !admin ? 'Solo el dueño de la sala puede quitar pantallas.' : s && !s.remote ? 'Las pantallas propias no se pueden quitar: solo las de invitados.' : 'Se quita cuando la otra persona lo acepta.'; $('remove-screen').textContent = removeArmed === selected ? '¿Seguro? Pulsa otra vez' : 'Quitar esta pantalla';
+    renderPicker(); renderConn(); askWho();
     TecRoom.render(state); TecChat.render(state); TecSocial.render(state); renderMembers(); renderShares();
     $('savebar').hidden = !arrange || $('screens-tab').hidden;
     $('save').disabled = saving || overlaps; $('save').textContent = saving ? 'Guardando…' : dirty ? 'Guardar mapa' : 'Mapa guardado';
     $('save-heading').textContent = dirty ? 'Cambios sin guardar' : 'Mapa actual'; $('save-message').textContent = saving ? 'Aplicando en las dos PCs…' : overlaps ? 'Separa las pantallas que se superponen.' : 'Los cambios se guardan solos.';
-    ['theme', 'automatic'].forEach(id => $(id).disabled = saving); ['reset-map', 'position-x', 'position-y'].forEach(id => $(id).disabled = saving || !arrange);
+    $('theme').disabled = saving; $('reset-map').disabled = saving || !arrange;
     document.querySelectorAll('[data-dx]').forEach(b => b.disabled = saving || !arrange);
     for (const [id, value] of Object.entries({ 'connection-title': state.connected ? 'Tus equipos están conectados' : 'Esperando conexión', 'detail-name': state.machineName, 'detail-remote': state.remoteName || '—', 'detail-role': state.role === 'Server' ? 'Anfitrión de la sesión' : state.joinCode ? 'Invitado' : 'Enlace directo por IP', 'detail-host': state.host, 'detail-port': state.port, 'detail-status': state.status })) $(id).textContent = value;
     peerChanges();
@@ -144,7 +139,6 @@
     $('auto-receive').setAttribute('aria-pressed', state.autoReceive !== false); $('auto-receive').classList.toggle('on', state.autoReceive !== false); $('auto-receive').querySelector('span').textContent = state.autoReceive !== false ? 'Recibir solo: sí' : 'Recibir solo: no';
     $('dropzone').setAttribute('aria-disabled', extras ? 'false' : 'true');
     $('transfer-status').textContent = state.transfer || 'Sin envíos todavía.';
-    if (state.receiveFolder) $('receive-folder').textContent = state.receiveFolder;
     draw();
   }
   // ---- Barra de estado: siempre visible, con un boton grande que cambia segun lo que pasa ----
@@ -172,7 +166,7 @@
     take.hidden = !taking; take.disabled = !!state.control?.pending; take.textContent = state.control?.pending ? 'Esperando permiso…' : 'Controlar mouse y teclado';
     take.onclick = () => (state.control && !state.control.own) ? controlPc() : send({ type: 'toggleControl' });
     free.hidden = !linked; free.onclick = () => { send({ type: 'freeInput' }); toast('Mouse y teclado liberados en esta PC.'); };
-    const extra = [main, alt].filter(x => x && !['Ver mi sala', 'Abrir mi sala e invitar', 'Controlar mouse y teclado', 'Esperando permiso…'].includes(x.label));
+    const extra = [main, alt].filter(x => x && !['Ver mi sala', 'Abrir mi sala e invitar', 'Controlar mouse y teclado', 'Esperando permiso…', 'Conectar con un código'].includes(x.label));
     ctx.replaceChildren(...extra.map(x => { const e = document.createElement('button'); e.type = 'button'; e.className = 'secondary'; e.textContent = x.label; e.onclick = x.act; return e; }));
   }
   $('sb-main').onclick = () => document.querySelector('[data-tab=room]').click();
@@ -223,11 +217,34 @@
     if (m.who === 'me') { const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'edit-hint'; edit.textContent = 'Editar mi nombre y foto'; edit.onclick = () => TecSocial.openProfile(true); box.append(edit); }
     li.append(av, box); return li;
   }
-  let membersSig = '', shareFilter = null, sharesSig = '';
+  // ---- Pantallas: cuadros pequenos con numero para elegir cual mover, y datos de la conexion ----
+  function renderPicker() {
+    const host = $('screen-picker'), list = rects(), sig = list.map(s => M.key(s)).join('|') + '#' + selected + '#' + (state.connected ? 1 : 0) + '#' + (state.remoteName || '');
+    if (host.dataset.sig === sig) return; host.dataset.sig = sig;
+    host.replaceChildren(...list.map((s, n) => {
+      const b = document.createElement('button'), who = s.remote ? state.remoteName || 'Otra PC' : state.machineName;
+      b.type = 'button'; b.className = 'pick ' + (s.remote ? 'remote' : 'local') + (M.key(s) === selected ? ' on' : ''); b.textContent = String(n + 1);
+      b.title = `${who} · ${s.width} × ${s.height}`; b.setAttribute('aria-label', `Pantalla ${n + 1}, ${who}`); b.setAttribute('aria-pressed', M.key(s) === selected);
+      b.onclick = () => { selected = M.key(s); update(); }; return b;
+    }));
+  }
+  function renderConn() {
+    const host = state.role === 'Server', onl = state.online || {}, addrs = state.addresses || [], legacy = !host && !state.joinCode;
+    const set = (id, v) => { const e = $(id); if (e && e.textContent !== v) e.textContent = v; };
+    set('cd-state', state.powered === false ? 'Apagado' : state.connected ? 'Conectado' : state.netMode === 'idle' ? 'Sin sala' : 'Esperando');
+    set('cd-me', state.machineName || '—'); set('cd-peer', state.connected ? state.remoteName || 'Otra PC' : '—');
+    set('cd-role', state.netMode === 'idle' ? 'Sin sala' : host ? 'Dueño de la sala' : legacy ? 'Enlace directo' : 'Invitado');
+    set('cd-mode', state.control?.own !== false ? 'Mis computadoras' : 'Con otras personas');
+    set('cd-code', host && state.netMode !== 'idle' ? state.sessionCode || '—' : state.joinCode || '—');
+    set('cd-via', !state.connected ? '—' : state.joinedOnline ? 'Internet · servidor cifrado' : 'Red local o directa');
+    set('cd-addr', addrs.length ? addrs.join(' · ') : '—'); set('cd-host', !host && state.host ? state.host : state.peerAddress || '—'); set('cd-port', state.port ? String(state.port) : '—');
+    set('cd-relay', !onl.enabled ? 'Apagado' : onl.relayHost ? onl.relayHost + (onl.invite ? ' · sala abierta' : '') : 'Sin buscar');
+    set('cd-fw', state.firewall === false ? 'Bloqueando: usa «Reparar conexión»' : 'Permitido');
+    const shown = (list) => (list || []).length; set('cd-screens', `Esta PC: ${shown(state.local)} · Otra PC: ${shown(state.remote)}`);
+  }  let membersSig = '', shareFilter = null, sharesSig = '';
   function renderMembers() {
     const list = people(), sig = JSON.stringify(list.map(m => ({ ...m, avatar: (m.avatar || '').length }))) + '|' + shareFilter + '|' + (state.shares || []).length;
     if (sig === membersSig) return; membersSig = sig;
-    $('members').replaceChildren(...list.map(memberCard)); $('members-count').textContent = list.length + ' de ' + (state.maxPeople || 10);
     $('file-people').replaceChildren(...list.map(m => {
       const li = memberCard(m), count = (state.shares || []).filter(f => f.mine === (m.who === 'me')).length, b = document.createElement('button');
       b.className = 'secondary'; b.setAttribute('aria-pressed', shareFilter === m.who); b.textContent = shareFilter === m.who ? 'Ver todos los archivos' : `Ver archivos que compartió (${count})`;
@@ -271,10 +288,9 @@
     $('host-status').textContent = idleNet && host ? 'Tu sesión está cerrada: nadie puede conectarse a esta PC. Ábrela cuando quieras invitar a alguien.' : legacy ? 'Ahora usas un enlace directo por IP. Pulsa «Abrir mi propia sesión» para invitar con código.' : guest ? 'Estás unido a otra sesión. Sal de ella para invitar a alguien.' : state.connected ? `${state.remoteName || 'Otra PC'} está conectada a tu sesión.` : 'Esperando a que alguien se una con este código.';
     $('host-card').classList.toggle('inactive', !host);
     if (host && (state.members || []).length > 2) $('host-status').textContent = `${state.members.length - 1} PCs conectadas a tu sala. Caben ${state.maxPeople || 10} en total, contigo.`;
-    const mode = state.control?.mode || 'people', owner = state.role === 'Server';
-    $('mode-own').setAttribute('aria-checked', mode === 'own'); $('mode-people').setAttribute('aria-checked', mode === 'people'); $('mode-own').disabled = $('mode-people').disabled = !owner;
-    $('mode-note').textContent = owner ? (mode === 'own' ? 'Con «Mis computadoras» el mouse y el teclado cruzan solos entre tus PCs.' : 'Con «Con otras personas» nadie mueve tu mouse sin tu permiso: el botón «Controlar PC» lo pide.') : 'Lo decide quien abrió la sala.';
     const onl = state.online || {}; $('online-switch').setAttribute('aria-checked', !!onl.enabled); if (document.activeElement !== $('relay-host')) $('relay-host').value = onl.pinned ? (onl.relayHost || '') : '';
+    $('online-chip').textContent = !onl.enabled ? 'Apagada' : onl.invite ? 'Lista' : 'Buscando…'; $('online-chip').classList.toggle('ok', !!onl.invite);
+    $('repair-run').setAttribute('aria-checked', state.firewall !== false);
     $('online-invite-row').hidden = !onl.invite; $('online-invite').textContent = onl.invite || '';
     $('relay-status').textContent = onl.relayHost ? `Servidor actual: ${onl.relayHost}${onl.pinned ? ' (fijado a mano)' : ''}. ${onl.status || ''}` : (onl.status || 'Todavía no se buscó el servidor: se busca solo al abrir tu sesión.');
     $('online-note').textContent = !onl.enabled ? 'Apagado: solo podrán entrar PCs de tu misma red. Enciéndelo para invitar a alguien de otra ciudad.' : host && active && onl.invite ? 'Tu sala también está abierta por internet. Pulsa «Copiar mensaje para invitar» y envíaselo a quien quieras.' : host && active ? 'Buscando el servidor en línea… (si tarda, pulsa «Actualizar servidor»).' : 'Al abrir tu sesión, TecLink abrirá tu sala por internet y creará la invitación sola.';    const addrs = state.addresses || [];
@@ -288,9 +304,7 @@
     $('join-btn').hidden = guest; $('join-code').disabled = guest;
     // Mi sala: abrir, invitar, cerrar o salir viven aquí, en la sección Sala (no en la barra de arriba).
     const inRoom = state.netMode !== 'idle', hostingNow = host && inRoom, guestIn = !host && !legacy && inRoom;
-    $('rs-title').textContent = !on ? 'TecLink está apagado' : hostingNow ? (state.connected ? `Tu sala está abierta · ${state.remoteName || 'otra PC'} adentro` : `Tu sala está abierta · código ${state.sessionCode || '—'}`) : guestIn ? (state.connected ? `Estás en la sala de ${state.remoteName || 'la otra PC'}` : 'Entrando a la sala…') : 'No estás en ninguna sala';
-    $('rs-sub').textContent = hostingNow ? 'Cierra tu sala cuando termines: nadie más podrá entrar.' : guestIn ? 'Puedes salir cuando quieras; la sala sigue abierta para los demás.' : host || legacy ? 'Ábrela para invitar a otra PC o a otras personas.' : '';
-    $('rs-open').hidden = !(on && host && !inRoom); $('rs-close').hidden = !hostingNow; $('rs-leave').hidden = !guestIn; $('rs-copy').hidden = !hostingNow;
+    $('rs-close').hidden = !hostingNow; $('rs-leave').hidden = !guestIn;
     $('join-notice').textContent = state.joinNotice || (!host && !state.connected && state.joinCode ? 'Buscando la sesión en tu red…' : !host && state.connected ? `Conectado a la sesión de ${state.remoteName || 'la otra PC'}.` : '');
     const m = !!state.management, sw = $('management');
     const ownRoom = state.control?.own !== false; // en «Mis computadoras» no hay nada que activar
@@ -348,17 +362,15 @@
   const renew = () => { send({ type: 'renewOnline' }); toast('Invitación renovada: las anteriores ya no sirven.'); };
   $('renew-online').onclick = renew; $('renew-online2').onclick = renew;  $('copy-remote').onclick = async () => { const text = $('copy-remote').dataset.invite; if (!text) return; const shown = text.slice(0, 3) + '-' + text.slice(3); try { await navigator.clipboard.writeText(shown); toast('Invitación copiada: ' + shown + '. Pégala en el campo de código de la otra PC.'); } catch { toast('Tu invitación es ' + shown); } };
   $('join-code').onkeydown = e => { if (e.key === 'Enter') $('join-btn').click(); };
-  $('repair-run').onclick = () => { $('diag-out').hidden = false; $('diag-out').textContent = 'Reparando: si Windows pide permiso, pulsa Sí…'; send({ type: 'repair' }); };
-  $('diag-run').onclick = () => { $('diag-run').disabled = true; $('diag-run').textContent = 'Probando…'; $('diag-out').hidden = false; $('diag-out').textContent = 'Revisando la red…'; send({ type: 'diagnose' }); };
+  $('repair-run').onclick = () => { $('diag-box').hidden = false; $('diag-out').hidden = false; $('diag-out').textContent = 'Reparando: si Windows pide permiso, pulsa Sí…'; send({ type: 'repair' }); };
+  $('diag-run').onclick = () => { $('diag-box').hidden = false; $('diag-run').disabled = true; $('diag-run').textContent = 'Probando…'; $('diag-out').hidden = false; $('diag-out').textContent = 'Revisando la red…'; send({ type: 'diagnose' }); };
   $('diag-copy').onclick = async () => { try { await navigator.clipboard.writeText($('diag-out').textContent); toast('Informe copiado. Pégalo donde te lo pidan.'); } catch { toast('Selecciona el texto del informe y cópialo.'); } };
   $('firewall-btn').onclick = () => { send({ type: 'session', action: 'firewall' }); toast('Windows te pedirá permiso: pulsa Sí.'); };
   $('leave-btn').onclick = () => send({ type: 'session', action: 'stop' });
   $('open-session').onclick = () => send({ type: 'session', action: 'open' });
   $('close-session').onclick = () => send({ type: 'session', action: 'stop' });
-  $('rs-open').onclick = () => { send({ type: 'session', action: 'open' }); toast('Abriendo tu sala…'); };
   $('rs-close').onclick = () => { send({ type: 'session', action: 'stop' }); toast('Cerraste tu sala.'); };
   $('rs-leave').onclick = () => { send({ type: 'session', action: 'stop' }); toast('Saliste de la sala.'); };
-  $('rs-copy').onclick = () => { const m = state?.online?.message; if (m) copyText(m, 'Invitación copiada: pégala en WhatsApp, correo o donde quieras.'); else $('copy-code').click(); };
   let pointerBusy = false, pointerTimer, chosenStyle = 'system';
   function sendPointer() {
     pointerBusy = true; clearTimeout(pointerTimer);
@@ -383,8 +395,6 @@
   });
   function move(dx, dy) { if (saving || !state.canArrange) return; const p = draft.placements.find(p => M.key(p) === selected); if (!p) return; p.x += dx; p.y += dy; dirty = true; update(); autoSave(); }
   document.querySelectorAll('[data-dx]').forEach(b => b.onclick = () => move(+b.dataset.dx, +b.dataset.dy));
-  ['x', 'y'].forEach(axis => $('position-' + axis).onchange = e => { const p = draft.placements.find(p => M.key(p) === selected), n = Number(e.target.value); if (p && Number.isInteger(n) && Math.abs(n) <= 1000000) { p[axis] = n; dirty = true; update(); autoSave(); } });
-  $('automatic').onchange = e => { draft.automatic = e.target.checked; dirty = true; update(); };
   $('theme').onchange = e => { draft.theme = e.target.value; dirty = true; theme(); applyColors(); update(); };
   $('save').onclick = () => { if (saving || M.overlaps(rects())) return; saving = true; update(); send({ type: 'save', map: structuredClone(draft) }); };
   $('toggle-control').onclick = () => send({ type: 'toggleControl' });
@@ -395,13 +405,6 @@
   $('zoom-in').onclick = () => zoom(1.25); $('zoom-out').onclick = () => zoom(.8);
   $('reset-map').onclick = () => { const hidden = draft.placements.filter(p => p.hidden); draft.placements = M.defaults(state).map(p => hidden.some(h => M.key(h) === M.key(p)) ? { ...p, hidden: true } : p); dirty = true; update(); fit(); autoSave(); };
   document.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { document.querySelectorAll('[data-tab]').forEach(t => { t.classList.toggle('active', t === b); t.setAttribute('aria-selected', t === b ? 'true' : 'false'); }); ['screens', 'room', 'peer', 'connection'].forEach(name => $(name + '-tab').hidden = b.dataset.tab !== name); TecRoom.setActive(b.dataset.tab === 'room'); if (state) update(); if (b.dataset.tab === 'screens') fit(); });
-  // Quitar una pantalla de un invitado: se confirma con un segundo clic y despues la otra persona debe aceptarlo.
-  let removeArmed = null, armTimer;
-  $('remove-screen').onclick = () => {
-    const s = selectedRect(); if (!s || !s.remote || state.role !== 'Server') { toast('Solo el dueño de la sala puede quitar pantallas de invitados. Las pantallas propias no se quitan.'); return; }
-    if (removeArmed !== selected) { removeArmed = selected; clearTimeout(armTimer); armTimer = setTimeout(() => { removeArmed = null; update(); }, 3500); update(); return; }
-    removeArmed = null; send({ type: 'removeAsk', id: s.id }); update();
-  };
   $('restore-screens').onclick = () => { draft.placements.forEach(p => { delete p.hidden; }); if (M.overlaps(rects())) draft.placements = M.defaults(state); dirty = true; buildNodes(); update(); fit(); autoSave(); toast('Pantallas restauradas.'); };
   const openTab = name => document.querySelector(`[data-tab=${name}]`).click();
   // Controlar PC: abre la otra PC en una ventana donde el mouse y el teclado son de verdad (se puede abrir carpetas, arrastrar, escribir). Esc para volver.
@@ -415,14 +418,21 @@
     const screen = (state?.remote || [])[0]; if (!screen) { toast('La otra PC todavía no mostró su pantalla.'); return; }
     send({ type: 'fullscreen', remote: true, id: screen.id }); toast('Controlando ' + (state.remoteName || 'la otra PC') + '. Pulsa Esc para volver.');
   }  $('room-control').onclick = controlPc;
-  const answerControl = accept => { send({ type: 'controlAnswer', accept }); $('control-ask').hidden = $('control-scrim').hidden = true; toast(accept ? 'Permitiste el control. Pulsa «Detener control» cuando quieras.' : 'No se permitió el control.'); };
+  // ---- Quien entro: el dueño dice si es otra de sus PCs o es otra persona; TecLink lo recuerda ----
+  let whoAsked = '';
+  const whoOthers = () => { try { return JSON.parse(localStorage.getItem('tecWhoOther') || '[]'); } catch { return []; } };
+  function askWho() {
+    if (!state.connected) { whoAsked = ''; return; }
+    if (state.role !== 'Server' || !state.sessionMode || state.control?.peerOwn || !state.remoteName || whoAsked === state.remoteName || whoOthers().includes(state.remoteName)) return;
+    whoAsked = state.remoteName; $('who-title').textContent = `${state.remoteName} entró a tu sala`; $('who-ask').hidden = $('control-scrim').hidden = false; $('who-mine').focus();
+  }
+  const answerWho = mine => { $('who-ask').hidden = $('control-scrim').hidden = true; send({ type: 'peerIsMine', mine }); if (!mine) localStorage.setItem('tecWhoOther', JSON.stringify([...new Set([...whoOthers(), whoAsked])].slice(-30))); toast(mine ? 'Listo: esa PC entra siempre en «Mis computadoras».' : 'Listo: controlar su PC pedirá su permiso.'); };
+  $('who-mine').onclick = () => answerWho(true); $('who-other').onclick = () => answerWho(false);
+  $('credits-site').onclick = () => send({ type: 'openUrl', url: 'https://technocrazy.org' });  const answerControl = accept => { send({ type: 'controlAnswer', accept }); $('control-ask').hidden = $('control-scrim').hidden = true; toast(accept ? 'Permitiste el control. Pulsa «Detener control» cuando quieras.' : 'No se permitió el control.'); };
   $('control-yes').onclick = () => answerControl(true); $('control-no').onclick = () => answerControl(false);
-  $('mode-own').onclick = () => send({ type: 'setRoomMode', mode: 'own' }); $('mode-people').onclick = () => send({ type: 'setRoomMode', mode: 'people' });
   TecChat.init({ send, toast, controlPc, onOpen: open => { TecRoom.setDocked(open); if (open) openTab('room'); else if (state) update(); } });
   TecSocial.init({ send, toast });
   TecRoom.init({ send, toast, key: M.key, changed: () => { if (state) update(); } });
-  // Botón "Cambiar de pantalla": recorre todas las pantallas (esta PC y la otra).
-  $('next-screen').onclick = () => { const all = rects(); if (!all.length) return; const i = all.findIndex(s => M.key(s) === selected); selected = M.key(all[(i + 1) % all.length]); update(); };
   // Configuración (engranaje): apariencia de la plataforma y ratón.
   const drawer = $('settings-drawer'), scrim = $('settings-scrim');
   function openSettings(open) { drawer.hidden = scrim.hidden = !open; if (open) $('settings-close').focus(); else $('settings-open').focus(); }

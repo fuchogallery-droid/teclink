@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using TecLink.Core.Networking;
 using TecLink.Core;
 
@@ -58,6 +58,8 @@ public sealed class AppConfig
     public string JoinSecret { get; set; } = "";
     /// <summary>Key typed by the person when an update asks for one (see Updater).</summary>
     public string UpdateKey { get; set; } = "";
+    /// <summary>Names of PCs the owner said are his own: they join in "Mis computadoras" mode by themselves.</summary>
+    public List<string> OwnPcs { get; set; } = new();
     public string JoinRelay { get; set; } = "";
     /// <summary>How this person wants to be called in rooms (empty = the computer name). Lives only on this PC.</summary>
     public string DisplayName { get; set; } = "";

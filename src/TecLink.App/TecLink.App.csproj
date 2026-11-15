@@ -9,9 +9,9 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ApplicationIcon>app.ico</ApplicationIcon>
     <AssemblyName>TecLink</AssemblyName>
-    <Version>0.9.5</Version>
-    <AssemblyVersion>0.9.5.0</AssemblyVersion>
-    <FileVersion>0.9.5.0</FileVersion>
+    <Version>0.9.6</Version>
+    <AssemblyVersion>0.9.6.0</AssemblyVersion>
+    <FileVersion>0.9.6.0</FileVersion>
     <Product>TecLink</Product>
     <Company>TechnoCrazy</Company>
     <Authors>TechnoCrazy</Authors>
@@ -21,7 +21,7 @@
     <NeutralLanguage>es</NeutralLanguage>
     <PackageProjectUrl>https://technocrazy.org</PackageProjectUrl>
     <RepositoryUrl>https://github.com/fuchogallery-droid/teclink</RepositoryUrl>
-    <InformationalVersion>0.9.5</InformationalVersion>
+    <InformationalVersion>0.9.6</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
 

@@ -209,7 +209,8 @@ public sealed class TrayAppContext : ApplicationContext
     {
         var uninstaller = Path.Combine(AppContext.BaseDirectory, "unins000.exe");
         if (!File.Exists(uninstaller)) return false;
-        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(uninstaller) { UseShellExecute = true }); }
+        // Automatico: TecLink se cierra y un instante despues el desinstalador borra todo sin preguntar otra vez (la persona ya confirmo en la ventana).
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/d /c \"timeout /t 2 /nobreak >nul & \"{uninstaller}\" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART\"") { UseShellExecute = false, CreateNoWindow = true }); }
         catch (System.ComponentModel.Win32Exception) { return false; }
         _clipboard.BeginInvoke(ExitApp);
         return true;

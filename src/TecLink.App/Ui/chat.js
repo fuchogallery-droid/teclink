@@ -39,40 +39,32 @@
     for (const id of ['chat-bubble', 'chat-badge', 'chat-panel', 'chat-close', 'chat-send', 'chat-log', 'chat-form', 'chat-input', 'chat-people', 'tool-mouse', 'tool-files', 'mic-toggle', 'mic-meter', 'mic-device', 'mic-ptt', 'mic-hold', 'voice-volume', 'voice-note', 'chat-files', 'chat-files-count', 'chat-share-list', 'chat-files-btn', 'chat-skin-btn', 'chat-gear-btn', 'chat-drop', 'chat-auto']) el[id] = document.getElementById(id);
   }
 
-  // ---- Burbuja: abre y cierra el chat; se puede subir o bajar arrastrandola ----
-  // El boton se arrastra a donde quieras y se pega al borde mas cercano (arriba, abajo, izquierda o derecha, incluidas las esquinas).
-  let spot = (() => { try { const s = JSON.parse(localStorage.getItem('tecChatSpot') || 'null'); if (s && ['left', 'right', 'top', 'bottom'].includes(s.edge)) return { edge: s.edge, pos: Math.max(5, Math.min(95, +s.pos || 55)) }; } catch { /* sin guardar */ } return { edge: 'right', pos: 55 }; })();
+  // ---- Burbuja: abre y cierra el chat. Vive siempre abajo, en la esquina derecha; solo se puede deslizar de izquierda a derecha ----
+  let spot = (() => { try { const s = JSON.parse(localStorage.getItem('tecChatSpot2') || 'null'); if (s && typeof s.pos === 'number') return { pos: Math.max(0, Math.min(100, s.pos)) }; } catch { /* sin guardar */ } return { pos: 100 }; })();
   function place() {
-    const b = el['chat-bubble'], s = b.style, p = spot.pos, half = (b.offsetWidth || 56) / 2;
-    s.top = s.bottom = s.left = s.right = 'auto';
-    if (spot.edge === 'right') { s.right = '16px'; s.top = `calc(${p}% - ${half}px)`; }
-    else if (spot.edge === 'left') { s.left = '16px'; s.top = `calc(${p}% - ${half}px)`; }
-    else if (spot.edge === 'top') { s.top = '16px'; s.left = `calc(${p}% - ${half}px)`; }
-    else { s.bottom = '16px'; s.left = `calc(${p}% - ${half}px)`; }
+    const b = el['chat-bubble'], s = b.style, half = (b.offsetWidth || 56) / 2;
+    s.top = s.right = 'auto'; s.bottom = 'calc(var(--credits-h, 44px) + 14px)';
+    s.left = `clamp(16px, calc(${spot.pos}% - ${half}px), calc(100% - ${half * 2 + 16}px))`;
     // El panel flotante se abre del mismo lado donde esta el boton.
-    const x = spot.edge === 'left' ? 0 : spot.edge === 'right' ? 100 : p, y = spot.edge === 'top' ? 0 : spot.edge === 'bottom' ? 100 : p;
-    el['chat-panel'].classList.toggle('at-left', x < 50); el['chat-panel'].classList.toggle('at-top', y < 50);
+    el['chat-panel'].classList.toggle('at-left', spot.pos < 50); el['chat-panel'].classList.remove('at-top');
   }
   function drag(e) {
-    if (e.button !== 0) return; const b = el['chat-bubble'], sx = e.clientX, sy = e.clientY; let moved = false;
+    if (e.button !== 0) return; const b = el['chat-bubble'], sx = e.clientX; let moved = false;
     b.setPointerCapture(e.pointerId);
     const move = ev => {
-      if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 6) return;
+      if (!moved && Math.abs(ev.clientX - sx) < 6) return;
       moved = true; b.style.transition = 'none'; const h = b.offsetWidth / 2;
-      b.style.right = b.style.bottom = 'auto'; b.style.left = Math.max(0, Math.min(innerWidth - b.offsetWidth, ev.clientX - h)) + 'px'; b.style.top = Math.max(0, Math.min(innerHeight - b.offsetHeight, ev.clientY - h)) + 'px';
+      b.style.left = Math.max(16, Math.min(innerWidth - b.offsetWidth - 16, ev.clientX - h)) + 'px';
     };
     const end = ev => {
       b.removeEventListener('pointermove', move); b.removeEventListener('pointerup', end); b.removeEventListener('pointercancel', end); b.style.transition = '';
       if (moved) {
-        const x = ev.clientX, y = ev.clientY, d = { left: x, right: innerWidth - x, top: y, bottom: innerHeight - y };
-        const edge = Object.keys(d).reduce((a, k) => d[k] < d[a] ? k : a, 'right');
-        spot = { edge, pos: Math.round(Math.max(5, Math.min(95, (edge === 'left' || edge === 'right' ? y / innerHeight : x / innerWidth) * 100))) };
-        localStorage.setItem('tecChatSpot', JSON.stringify(spot)); place(); b.dataset.moved = '1'; setTimeout(() => delete b.dataset.moved, 0);
+        spot = { pos: Math.round(Math.max(0, Math.min(100, ev.clientX / innerWidth * 100))) };
+        localStorage.setItem('tecChatSpot2', JSON.stringify(spot)); place(); b.dataset.moved = '1'; setTimeout(() => delete b.dataset.moved, 0);
       }
     };
     b.addEventListener('pointermove', move); b.addEventListener('pointerup', end); b.addEventListener('pointercancel', end);
-  }
-  function setOpen(value) {
+  }  function setOpen(value) {
     open = value; el['chat-panel'].hidden = !open; el['chat-bubble'].setAttribute('aria-expanded', open); el['chat-bubble'].setAttribute('aria-label', open ? 'Cerrar el chat de la sala' : 'Abrir el chat de la sala');
     document.body.classList.toggle('chat-open', open); api.onOpen?.(open);
     if (open) { unread = 0; badge(); el['chat-input'].focus(); scroll(); listDevices(); } else el['chat-bubble'].focus();
