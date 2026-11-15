@@ -200,8 +200,8 @@
     el['chat-bubble'].addEventListener('click', () => { if (el['chat-bubble'].dataset.moved) return; setOpen(!open); });
     el['chat-close'].onclick = () => setOpen(false);
     el['chat-files-btn'].onclick = () => { el['chat-files'].open = !el['chat-files'].open; if (el['chat-files'].open) el['chat-files'].scrollIntoView({ block: 'nearest' }); };
-    el['chat-gear-btn'].onclick = () => document.getElementById('settings-open').click();
-    el['chat-skin-btn'].onclick = () => { document.getElementById('settings-open').click(); document.getElementById('skin-title')?.scrollIntoView({ block: 'start' }); };
+    el['chat-gear-btn'].onclick = () => window.tecOpenColors?.();
+    el['chat-skin-btn'].onclick = () => window.tecOpenColors?.();
     el['chat-form'].onsubmit = sendText;
     el['chat-panel'].addEventListener('keydown', e => { if (e.key === 'Escape') setOpen(false); });
     document.querySelectorAll('[data-mic-switch]').forEach(b => b.onclick = () => setMic(!mic.on));
