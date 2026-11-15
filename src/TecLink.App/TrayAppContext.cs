@@ -152,7 +152,7 @@ public sealed class TrayAppContext : ApplicationContext
 
     private void ShowPanel()
     {
-        if (_panel is null || _panel.IsDisposed) _panel = new ControlPanelForm(_bridge, () => _status, () => ShowViewer(), SetPower, Session, ShowFullScreen, Uninstall);
+        if (_panel is null || _panel.IsDisposed) _panel = new ControlPanelForm(_bridge, () => _status, () => ShowViewer(), SetPower, Session, ShowFullScreen, Uninstall, InstallUpdate);
         _panel.Show();
         if (_panel.WindowState == FormWindowState.Minimized) _panel.WindowState = FormWindowState.Normal;
         _panel.Activate();
@@ -210,6 +210,21 @@ public sealed class TrayAppContext : ApplicationContext
         var uninstaller = Path.Combine(AppContext.BaseDirectory, "unins000.exe");
         if (!File.Exists(uninstaller)) return false;
         try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(uninstaller) { UseShellExecute = true }); }
+        catch (System.ComponentModel.Win32Exception) { return false; }
+        _clipboard.BeginInvoke(ExitApp);
+        return true;
+    }
+
+    /// <summary>Runs the downloaded installer quietly over this one (settings stay), then opens TecLink again. TecLink closes first so Windows can replace its files.</summary>
+    private bool InstallUpdate(string installer)
+    {
+        var exe = Environment.ProcessPath;
+        if (!File.Exists(installer) || string.IsNullOrEmpty(exe)) return false;
+        try
+        {
+            var args = $"/d /c \"timeout /t 2 /nobreak >nul & \"{installer}\" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS & start \"\" \"{exe}\"\"";
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe", args) { UseShellExecute = false, CreateNoWindow = true });
+        }
         catch (System.ComponentModel.Win32Exception) { return false; }
         _clipboard.BeginInvoke(ExitApp);
         return true;

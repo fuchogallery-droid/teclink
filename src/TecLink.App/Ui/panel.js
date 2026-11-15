@@ -21,6 +21,7 @@
     if (message.type === 'removeAsk') { askConsent(message); return; }
     if (message.type === 'controlGranted') { openRemote(); return; }
     if (message.type === 'controlAsk') { $('control-ask-text').textContent = ` pide controlar tu PC: podrá mover tu mouse y escribir en tu teclado hasta que lo detengas. Tú puedes detenerlo cuando quieras con «Detener control».`; $('control-ask').hidden = $('control-scrim').hidden = false; $('control-no').focus(); return; }
+    if (message.type === 'upd') { TecSocial.upd(message); return; }
     if (message.type === 'update') { TecSocial.updateResult(message); return; }
     if (message.type === 'roomsPresence') { TecSocial.roomsPresence(message.found); return; }
     if (message.type === 'myFiles' || message.type === 'peerFiles') return;
@@ -165,13 +166,17 @@
     else if (state.sessionMode && !state.management) { dot = 'warn'; title = `Conectado con ${name}: el mouse NO pasa todavía`; sub = host ? 'Activa la gestión de pantallas para mover el mouse entre las dos PCs.' : 'El anfitrión debe activar la gestión de pantallas.'; main = host ? { label: 'Activar gestión', act: () => send({ type: 'setManagement', on: true }) } : null; }
     else { dot = 'ok'; title = `Conectado con ${name}`; sub = 'Pulsa «Controlar mouse y teclado» para pasar a la otra PC, o lleva el mouse al borde donde las pantallas se tocan. «Liberar mouse y teclado» te los devuelve.'; main = { label: 'Controlar mouse y teclado', act: () => send({ type: 'toggleControl' }) }; }
     $('sb-dot').className = 'sb-dot ' + dot; $('sb-title').textContent = title; $('sb-sub').textContent = sub;
-    const b = $('sb-main'); b.hidden = !main; if (main) { b.textContent = main.label; b.onclick = main.act; }
-    const a = $('sb-alt'); a.hidden = !alt; if (alt) { a.textContent = alt.label; a.onclick = alt.act; }
-    // Mouse y teclado: los dos botones de arriba siempre a la vista cuando hay otra PC conectada.
-    const linked = on && !!state.connected, free = $('sb-free');
-    free.hidden = !linked; free.disabled = !linked; free.textContent = 'Liberar mouse y teclado';
+    // Arriba solo hay dos botones fijos (Ver mi sala / Invitar a mi sala). Lo demas vive dentro de Sala.
+    const linked = on && !!state.connected, taking = linked && state.mode !== 'remote' && !state.control?.controlledBy && !state.control?.iControl && state.mode !== 'peer';
+    const take = $('rs-take'), free = $('rs-free'), ctx = $('rs-ctx');
+    take.hidden = !taking; take.disabled = !!state.control?.pending; take.textContent = state.control?.pending ? 'Esperando permiso…' : 'Controlar mouse y teclado';
+    take.onclick = () => (state.control && !state.control.own) ? controlPc() : send({ type: 'toggleControl' });
+    free.hidden = !linked; free.onclick = () => { send({ type: 'freeInput' }); toast('Mouse y teclado liberados en esta PC.'); };
+    const extra = [main, alt].filter(x => x && !['Ver mi sala', 'Abrir mi sala e invitar', 'Controlar mouse y teclado', 'Esperando permiso…'].includes(x.label));
+    ctx.replaceChildren(...extra.map(x => { const e = document.createElement('button'); e.type = 'button'; e.className = 'secondary'; e.textContent = x.label; e.onclick = x.act; return e; }));
   }
-  $('sb-free').onclick = () => { send({ type: 'freeInput' }); toast('Mouse y teclado liberados en esta PC.'); };
+  $('sb-main').onclick = () => document.querySelector('[data-tab=room]').click();
+  $('sb-alt').onclick = () => { if (state?.netMode === 'idle' && state?.powered !== false) send({ type: 'session', action: 'open' }); document.querySelector('[data-tab=connection]').click(); };
   // ---- Salida de la otra PC: aviso y suite vacia ----
   let lastPeer;
   function peerChanges() {

@@ -88,6 +88,31 @@
     const text = m.newer ? `Hay una versión nueva: ${m.latest}. Pulsa «Descargar» e instálala encima; no pierdes tu configuración.` : `Tienes la versión más reciente (${m.current}).`;
     note.textContent = text; $('dl-note').textContent = text;
   }
+  // ---- Boton Actualizar: busca, baja el instalador oficial y lo instala encima ----
+  let upBuy = '';
+  function upSet(text, { go = false, key = false, buy = false, bar = -1 } = {}) {
+    $('up-note').textContent = text; $('up-go').hidden = !go; $('up-key-row').hidden = !key; $('up-buy').hidden = !buy;
+    $('up-bar').hidden = bar < 0; if (bar >= 0) $('up-bar').firstElementChild.style.width = bar + '%';
+  }
+  function upd(m) {
+    if (m.phase === 'checked') {
+      $('up-go').disabled = false;
+      if (!m.ok) return upSet('No se pudo consultar. Revisa tu conexión a internet e inténtalo de nuevo.', { go: true });
+      upBuy = m.buyUrl || '';
+      if (!m.enabled) return upSet(m.message || 'Las actualizaciones están en pausa por ahora. Vuelve a intentarlo más tarde.', { buy: !!upBuy });
+      if (!m.newer) return upSet(`Ya tienes la última versión (${m.current}).`);
+      if (m.needKey && !m.keyOk) return upSet(`Hay una versión nueva (${m.latest}). ${m.message || 'Necesita una clave de actualización.'}`, { go: true, key: true, buy: !!upBuy });
+      return upSet(`Hay una versión nueva (${m.latest}). Tienes la ${m.current}.`, { go: true });
+    }
+    if (m.phase === 'key') { $('up-go').disabled = false; return upSet(m.message, { go: true, key: true, buy: !!upBuy }); }
+    if (m.phase === 'progress') return upSet(`Descargando… ${m.percent} %`, { bar: m.percent });
+    if (m.phase === 'installing') return upSet(`Instalando la versión ${m.latest}. TecLink se cierra y se abre solo en unos segundos.`, { bar: 100 });
+    if (m.phase === 'error') { $('up-go').disabled = false; return upSet(m.message, { go: true }); }
+  }
+  const openUp = open => {
+    $('up-pop').hidden = !open; $('up-open').setAttribute('aria-expanded', open);
+    if (open) { $('notif-pop').hidden = true; $('dl-pop').hidden = true; upSet('Buscando la última versión…'); api.send({ type: 'updateCheck' }); }
+  };
   const copyLink = async () => { const url = state?.online?.downloadUrl || 'https://github.com/fuchogallery-droid/teclink/releases/latest'; try { await navigator.clipboard.writeText(url); api.toast('Enlace de descarga copiado.'); } catch { api.toast('Enlace: ' + url); } };
   const openDl = open => { $('dl-pop').hidden = !open; $('dl-open').setAttribute('aria-expanded', open); if (open) { $('notif-pop').hidden = true; } };
   const openUninstall = open => { $('uninstall').hidden = $('uninstall-scrim').hidden = !open; if (open) $('uninstall-no').focus(); };
@@ -95,6 +120,9 @@
     api = options;
     $('update-check').onclick = () => { $('update-check').disabled = true; $('update-check').textContent = 'Buscando…'; api.send({ type: 'checkUpdate' }); };
     $('update-get').onclick = () => api.send({ type: 'openUrl', url: updateUrl });
+    $('up-open').onclick = () => openUp($('up-pop').hidden); $('up-close').onclick = () => openUp(false);
+    $('up-go').onclick = () => { $('up-go').disabled = true; upSet('Preparando la descarga…', { bar: 0 }); api.send({ type: 'updateApply', key: $('up-key').value.trim() }); };
+    $('up-buy').onclick = () => { if (upBuy.startsWith('https://')) api.send({ type: 'openUrl', url: upBuy }); };
     $('dl-open').onclick = () => openDl($('dl-pop').hidden); $('dl-close').onclick = () => openDl(false);
     $('dl-check').onclick = () => { $('dl-check').disabled = true; $('dl-check').textContent = 'Buscando…'; api.send({ type: 'checkUpdate' }); };
     $('dl-get').onclick = () => api.send({ type: 'openUrl', url: updateUrl }); $('dl-copy').onclick = copyLink;
@@ -109,7 +137,7 @@
     $('notif-open').onclick = () => openNotif($('notif-pop').hidden); $('notif-close').onclick = () => openNotif(false);
     $('save-room').onclick = () => api.send({ type: 'saveRoom' });
     $('rooms-check').onclick = () => { $('rooms-check').disabled = true; $('rooms-check').textContent = 'Buscando…'; api.send({ type: 'checkRooms' }); };
-    addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (!$('uninstall').hidden) openUninstall(false); else if (!$('dl-pop').hidden) openDl(false); else if (!$('profile').hidden) openProfile(false); else if (!$('notif-pop').hidden) openNotif(false); });
+    addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (!$('uninstall').hidden) openUninstall(false); else if (!$('up-pop').hidden) openUp(false); else if (!$('dl-pop').hidden) openDl(false); else if (!$('profile').hidden) openProfile(false); else if (!$('notif-pop').hidden) openNotif(false); });
   }
   function render(newState) {
     state = newState; renderNotifications(); renderRooms();
@@ -117,5 +145,5 @@
     if (state.profile && !state.profile.name && !localStorage.getItem('tecProfileAsked')) { localStorage.setItem('tecProfileAsked', '1'); openProfile(true); }
   }
   function roomsPresence(found) { presence = found || {}; $('rooms-check').textContent = 'Ver cuáles están activas'; $('rooms-check').disabled = false; $('rooms-list').dataset.sig = ''; if (state) renderRooms(); }
-  window.TecSocial = { init, render, roomsPresence, openProfile, paint, updateResult };
+  window.TecSocial = { init, render, roomsPresence, openProfile, paint, updateResult, upd };
 })();

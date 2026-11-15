@@ -56,6 +56,8 @@ public sealed class AppConfig
     public bool RelayHostPinned { get; set; }
     /// <summary>Guest: secret and relay of the online invitation that was pasted (empty = a normal local join).</summary>
     public string JoinSecret { get; set; } = "";
+    /// <summary>Key typed by the person when an update asks for one (see Updater).</summary>
+    public string UpdateKey { get; set; } = "";
     public string JoinRelay { get; set; } = "";
     /// <summary>How this person wants to be called in rooms (empty = the computer name). Lives only on this PC.</summary>
     public string DisplayName { get; set; } = "";
