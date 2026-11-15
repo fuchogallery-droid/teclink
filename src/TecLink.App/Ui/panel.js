@@ -95,6 +95,7 @@
   function update() {
     if (!state) return;
     const contacts = M.contacts(rects()), overlaps = M.overlaps(rects()), s = selectedRect();
+    $('app-version').textContent = state.version || ''; document.title = 'TecLink ' + (state.version || '') + ' · Pantallas';
     $('connection').textContent = state.connected ? 'Conectado' : 'Sin conexión'; $('connection').classList.toggle('connected', state.connected);
     $('mode').textContent = { local: 'Control local', remote: 'Controlando la otra PC', peer: 'La otra PC tiene el mando' }[state.mode];
     const on = state.powered !== false, remote = state.mode === 'remote';
@@ -259,10 +260,10 @@
     $('host-status').textContent = idleNet && host ? 'Tu sesión está cerrada: nadie puede conectarse a esta PC. Ábrela cuando quieras invitar a alguien.' : legacy ? 'Ahora usas un enlace directo por IP. Pulsa «Abrir mi propia sesión» para invitar con código.' : guest ? 'Estás unido a otra sesión. Sal de ella para invitar a alguien.' : state.connected ? `${state.remoteName || 'Otra PC'} está conectada a tu sesión.` : 'Esperando a que alguien se una con este código.';
     $('host-card').classList.toggle('inactive', !host);
     if (host && (state.members || []).length > 2) $('host-status').textContent = `${state.members.length - 1} PCs conectadas a tu sala. Caben ${state.maxPeople || 10} en total, contigo.`;
-    const onl = state.online || {}; $('online-switch').setAttribute('aria-checked', !!onl.enabled); if (document.activeElement !== $('relay-host')) $('relay-host').value = onl.relayHost || '';
+    const onl = state.online || {}; $('online-switch').setAttribute('aria-checked', !!onl.enabled); if (document.activeElement !== $('relay-host')) $('relay-host').value = onl.pinned ? (onl.relayHost || '') : '';
     $('online-invite-row').hidden = !onl.invite; $('online-invite').textContent = onl.invite || '';
-    $('online-note').textContent = !onl.enabled ? 'Para invitar a alguien de otra ciudad o red. Los datos viajan cifrados de una PC a la otra; el servidor solo los pasa y no guarda nada.' : !onl.relayHost ? 'Falta la dirección del servidor en línea (abajo, en «Servidor en línea»).' : onl.invite ? 'Tu sala también está abierta por internet. Pásale la invitación en línea a quien quieras invitar.' : 'Se abrirá por internet cuando abras tu sesión.';
-    const addrs = state.addresses || [];
+    $('relay-status').textContent = onl.relayHost ? `Servidor actual: ${onl.relayHost}${onl.pinned ? ' (fijado a mano)' : ''}. ${onl.status || ''}` : (onl.status || 'Todavía no se buscó el servidor: se busca solo al abrir tu sesión.');
+    $('online-note').textContent = !onl.enabled ? 'Apagado: solo podrán entrar PCs de tu misma red. Enciéndelo para invitar a alguien de otra ciudad.' : host && active && onl.invite ? 'Tu sala también está abierta por internet. Pulsa «Copiar mensaje para invitar» y envíaselo a quien quieras.' : host && active ? 'Buscando el servidor en línea… (si tarda, pulsa «Actualizar servidor»).' : 'Al abrir tu sesión, TecLink abrirá tu sala por internet y creará la invitación sola.';    const addrs = state.addresses || [];
     const remote = addrs.find(a => a.startsWith('100.')); // la direccion de Tailscale, alcanzable desde cualquier ciudad
     $('copy-remote').hidden = !(host && active && remote); $('copy-remote').dataset.invite = remote ? (state.sessionCode || '').replace('-', '') + '@' + remote : '';
     $('host-address').textContent = addrs.length && active ? `Dirección de esta PC (por si la otra no la encuentra sola): ${addrs.join(' · ')}` : '';
@@ -315,12 +316,17 @@
     if (code.length !== 6) { toast('El código tiene 6 letras o números.'); return; }
     send({ type: 'session', action: 'join', code, address }); toast(address ? 'Conectando con ' + address + '…' : 'Buscando la sesión en tu red…');
   };
-  // Sala en línea del dueño
+  // Sala en línea del dueño: la invitación la crea TecLink; la dirección del servidor se busca sola.
+  const copyText = async (text, ok) => { try { await navigator.clipboard.writeText(text); toast(ok); } catch { toast('Cópialo de aquí: ' + text); } };
   const sendOnline = on => send({ type: 'setOnline', on, relay: $('relay-host').value.trim() });
-  $('online-switch').onclick = () => { if (!$('relay-host').value.trim() && $('online-switch').getAttribute('aria-checked') !== 'true') { document.querySelector('.relay-more').open = true; toast('Escribe primero la dirección del servidor en línea.'); $('relay-host').focus(); return; } sendOnline($('online-switch').getAttribute('aria-checked') !== 'true'); };
-  $('relay-save').onclick = () => { sendOnline($('online-switch').getAttribute('aria-checked') === 'true'); toast('Servidor guardado.'); };
-  $('copy-online').onclick = async () => { const text = state?.online?.invite || ''; if (!text) return; try { await navigator.clipboard.writeText(text); toast('Invitación en línea copiada. Pásala a quien quieras invitar.'); } catch { toast('Tu invitación: ' + text); } };
-  $('renew-online').onclick = () => { send({ type: 'renewOnline' }); toast('Invitación renovada: las anteriores ya no sirven.'); };  $('copy-remote').onclick = async () => { const text = $('copy-remote').dataset.invite; if (!text) return; const shown = text.slice(0, 3) + '-' + text.slice(3); try { await navigator.clipboard.writeText(shown); toast('Invitación copiada: ' + shown + '. Pégala en el campo de código de la otra PC.'); } catch { toast('Tu invitación es ' + shown); } };
+  $('online-switch').onclick = () => sendOnline($('online-switch').getAttribute('aria-checked') !== 'true');
+  $('relay-save').onclick = () => { sendOnline($('online-switch').getAttribute('aria-checked') === 'true'); toast($('relay-host').value.trim() ? 'Servidor guardado.' : 'TecLink buscará el servidor sola.'); };
+  $('relay-refresh').onclick = () => { send({ type: 'refreshRelay' }); toast('Buscando el servidor en línea…'); };
+  $('copy-message').onclick = () => { const m = state?.online?.message; if (m) copyText(m, 'Mensaje copiado: pégalo en WhatsApp, correo o donde quieras.'); };
+  $('copy-online').onclick = () => { const i = state?.online?.invite; if (i) copyText(i, 'Invitación copiada.'); };
+  $('copy-download').onclick = () => copyText(state?.online?.downloadUrl || 'https://github.com/fuchogallery-droid/teclink/releases/latest', 'Enlace de descarga copiado.');
+  const renew = () => { send({ type: 'renewOnline' }); toast('Invitación renovada: las anteriores ya no sirven.'); };
+  $('renew-online').onclick = renew; $('renew-online2').onclick = renew;  $('copy-remote').onclick = async () => { const text = $('copy-remote').dataset.invite; if (!text) return; const shown = text.slice(0, 3) + '-' + text.slice(3); try { await navigator.clipboard.writeText(shown); toast('Invitación copiada: ' + shown + '. Pégala en el campo de código de la otra PC.'); } catch { toast('Tu invitación es ' + shown); } };
   $('join-code').onkeydown = e => { if (e.key === 'Enter') $('join-btn').click(); };
   $('repair-run').onclick = () => { $('diag-out').hidden = false; $('diag-out').textContent = 'Reparando: si Windows pide permiso, pulsa Sí…'; send({ type: 'repair' }); };
   $('diag-run').onclick = () => { $('diag-run').disabled = true; $('diag-run').textContent = 'Probando…'; $('diag-out').hidden = false; $('diag-out').textContent = 'Revisando la red…'; send({ type: 'diagnose' }); };

@@ -1,5 +1,5 @@
-﻿; TecLink: instalador por usuario (no pide permisos de administrador).
-#define AppVer "0.9.0"
+; TecLink: instalador por usuario (no pide permisos de administrador).
+#define AppVer "0.9.1"
 #ifndef Src
   #define Src "..\publish"
 #endif
@@ -10,6 +10,16 @@ AppName=TecLink
 AppVersion={#AppVer}
 AppPublisher=TechnoCrazy
 AppPublisherURL=https://technocrazy.org
+AppSupportURL=https://technocrazy.org
+AppUpdatesURL=https://github.com/fuchogallery-droid/teclink/releases
+AppCopyright=© 2026 TechnoCrazy. Todos los derechos reservados.
+AppComments=Comparte mouse, teclado, pantallas, chat y archivos entre PCs.
+VersionInfoVersion={#AppVer}.0
+VersionInfoCompany=TechnoCrazy
+VersionInfoDescription=Instalador de TecLink {#AppVer}
+VersionInfoProductName=TecLink
+VersionInfoProductVersion={#AppVer}
+VersionInfoCopyright=© 2026 TechnoCrazy
 DefaultDirName={autopf}\TecLink
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest

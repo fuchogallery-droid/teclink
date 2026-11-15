@@ -223,7 +223,7 @@ static class Rig
         {
             var clip = new ClipboardWatcher(); _ = clip.Handle;
             var cfg = new AppConfig { MachineName = name, Port = port, SessionCode = host ? code : "ZZZZZZ", Role = host ? PeerRole.Server : PeerRole.Client, JoinCode = host ? "" : code, PeerHost = invite is null ? "127.0.0.1" : "" };
-            if (hostOnlineRelay is not null) { cfg.OnlineEnabled = true; cfg.RelayHost = hostOnlineRelay; cfg.OnlineSecret = hostOnlineSecret!; }
+            if (hostOnlineRelay is not null) { cfg.OnlineEnabled = true; cfg.RelayHost = hostOnlineRelay; cfg.RelayHostPinned = true; cfg.OnlineSecret = hostOnlineSecret!; }
             var b = new EdgeBridge(cfg, clip);
             if (invite is not null) b.JoinSession(invite);
             return b;

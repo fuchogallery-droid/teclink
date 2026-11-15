@@ -1087,7 +1087,7 @@ public sealed partial class EdgeBridge : IDisposable
         var order = _config.ScreenOrder;
         return new
         {
-            members = MembersView(), maxPeople = MaxPeople, online = OnlineView(), joinedOnline = !string.IsNullOrEmpty(_config.JoinSecret), isHost = _config.Role == PeerRole.Server, mouseWith = _active?.Id ?? "",
+            version = AppInfo.VersionText, members = MembersView(), maxPeople = MaxPeople, online = OnlineView(), joinedOnline = !string.IsNullOrEmpty(_config.JoinSecret), isHost = _config.Role == PeerRole.Server, mouseWith = _active?.Id ?? "",
             machineName = OwnName, remoteName = _remoteName, remoteAvatar = _remoteAvatar ?? "", remotePc = _remotePc ?? "",
             profile = ProfileView(), notifications = NotificationsView(), savedRooms = SavedRoomsView(), canSaveRoom = CanSaveRoom,
             joinedByAsk = _askedToJoin,

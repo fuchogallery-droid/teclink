@@ -43,7 +43,7 @@ public sealed class TrayAppContext : ApplicationContext
         _trayIcon = new NotifyIcon
         {
             Icon = AppIcon,
-            Text = "TecLink — iniciando...",
+            Text = $"TecLink {AppInfo.VersionText} — iniciando...",
             ContextMenuStrip = menu,
             Visible = true,
         };
@@ -121,7 +121,7 @@ public sealed class TrayAppContext : ApplicationContext
         // status events arrive from the networking/hook threads; NotifyIcon must be touched from the UI thread
         _clipboard.BeginInvoke(() =>
         {
-            var text = "TecLink — " + status;
+            var text = $"TecLink {AppInfo.VersionText} — " + status;
             _trayIcon.Text = text.Length > 127 ? text[..127] : text; // NotifyIcon.Text has a 127-char limit
             _panel?.RefreshState();
         });

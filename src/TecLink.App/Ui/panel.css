@@ -354,3 +354,5 @@ body.cinema #chat-panel{transition:none}
 .online-box{display:flex;flex-direction:column;gap:10px;border-top:1px solid var(--line);padding-top:12px;margin-top:4px}
 .online-invite code{display:block;padding:10px 12px;border:1px solid var(--accent);border-radius:8px;background:var(--bg);font:600 15px/1.4 ui-monospace,Consolas,monospace;overflow-wrap:anywhere;user-select:all}
 .relay-more{border:1px solid var(--line);border-radius:8px;padding:0 12px 12px}.relay-more>summary{cursor:pointer;min-height:44px;display:flex;align-items:center}.relay-more input{width:100%;margin:6px 0 10px}
+
+.app-version{font-style:normal;font-size:12px;font-weight:600;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:1px 8px;vertical-align:middle;margin-left:6px;letter-spacing:0}
