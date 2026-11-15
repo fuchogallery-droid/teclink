@@ -20,10 +20,11 @@
       <div class="chat-tools" role="toolbar" aria-label="Controles de la sala">
         <button id="tool-mic" class="tool" type="button" data-mic-switch aria-pressed="false">${icon('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3"/>')}<span>Micrófono</span></button>
         <button id="tool-cam" class="tool" type="button" data-cam-switch aria-pressed="false">${icon('<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3"/>')}<span>Cámara</span></button>
-        <button id="tool-mouse" class="tool" type="button">${icon('<path d="M6 3v15l4-3.5 3 6.5 2.5-1.2-3-6.3H18z"/>')}<span>Controlar</span></button>
+        <button id="tool-mouse" class="tool" type="button">${icon('<path d="M6 3v15l4-3.5 3 6.5 2.5-1.2-3-6.3H18z"/>')}<span>Controlar PC</span></button>
         <button id="tool-files" class="tool" type="button">${icon('<path d="M12 16V4m0 0-4 4m4-4 4 4M4 15v3a2 2 0 002 2h12a2 2 0 002-2v-3"/>')}<span>Enviar archivos</span></button>
       </div>
-      <details id="chat-files" class="chat-files"><summary><span>Archivos compartidos</span><b id="chat-files-count">0</b></summary><ul id="chat-share-list" class="chat-share-list"></ul></details>
+      <div id="chat-drop" class="chat-drop" tabindex="0" role="button" aria-label="Soltar aquí archivos para compartirlos con la sala"><div class="drop-grid" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div><strong>Suelta archivos aquí</strong><span>Se agregan al historial y los demás los descargan con un clic</span></div>
+      <details id="chat-files" class="chat-files"><summary><span>Archivos compartidos</span><b id="chat-files-count">0</b></summary><label class="chat-auto"><input id="chat-auto" type="checkbox"> Descargar solos los archivos que compartan</label><ul id="chat-share-list" class="chat-share-list"></ul></details>
       <ul id="chat-log" class="chat-log" aria-live="polite"></ul>
       <form id="chat-form" class="chat-form"><label class="sr" for="chat-input">Mensaje</label><input id="chat-input" type="text" autocomplete="off" maxlength="2000" placeholder="Escribe un mensaje…"><button id="chat-send" class="primary" type="submit">Enviar</button></form>
       <details class="chat-voice"><summary>Ajustes de voz</summary>
@@ -35,7 +36,7 @@
         <p id="voice-note" class="map-note" role="status"></p>
       </details>`;
     (document.querySelector('.shell') || document.body).append(panel);
-    for (const id of ['chat-bubble', 'chat-badge', 'chat-panel', 'chat-close', 'chat-send', 'chat-log', 'chat-form', 'chat-input', 'chat-people', 'tool-mouse', 'tool-files', 'mic-toggle', 'mic-meter', 'mic-device', 'mic-ptt', 'mic-hold', 'voice-volume', 'voice-note', 'chat-files', 'chat-files-count', 'chat-share-list', 'chat-files-btn', 'chat-skin-btn', 'chat-gear-btn']) el[id] = document.getElementById(id);
+    for (const id of ['chat-bubble', 'chat-badge', 'chat-panel', 'chat-close', 'chat-send', 'chat-log', 'chat-form', 'chat-input', 'chat-people', 'tool-mouse', 'tool-files', 'mic-toggle', 'mic-meter', 'mic-device', 'mic-ptt', 'mic-hold', 'voice-volume', 'voice-note', 'chat-files', 'chat-files-count', 'chat-share-list', 'chat-files-btn', 'chat-skin-btn', 'chat-gear-btn', 'chat-drop', 'chat-auto']) el[id] = document.getElementById(id);
   }
 
   // ---- Burbuja: abre y cierra el chat; se puede subir o bajar arrastrandola ----
@@ -176,16 +177,17 @@
     if (others.length) others.forEach(m => names.push(m.name + (Date.now() - (talk[m.id]?.last || 0) < 700 ? ' · hablando' : '')));
     else if (state?.connected) names.push((state.remoteName || 'Otra PC') + (Date.now() - spk.last < 700 ? ' · hablando' : ''));
     el['chat-people'].textContent = state?.connected ? names.join(' · ') : 'Nadie más conectado todavía'; el['chat-send'].disabled = !state?.connected;    // Control del mouse y envio de archivos: los mismos botones de la sala, aqui a mano.
+    // Controlar PC: abre la otra PC en una ventana donde manejas su mouse y su teclado de verdad (Esc para volver).
     const m = el['tool-mouse'], label = m.querySelector('span'), name = state?.remoteName || 'la otra PC', mode = state?.mode;
-    label.textContent = mode === 'remote' ? 'Volver a mi PC' : mode === 'peer' ? 'Recuperar mi mouse' : 'Controlar a ' + name;
-    m.classList.toggle('on', mode === 'remote'); m.disabled = !state?.connected || (mode === 'local' && state.sessionMode && !state.management);
-    m.title = m.disabled && state?.connected ? 'El dueño de la sala debe activar la gestión de pantallas.' : '';
-    el['tool-files'].disabled = !state?.extras;
+    label.textContent = mode === 'remote' ? 'Volver a mi PC' : mode === 'peer' ? 'Recuperar mi mouse' : 'Controlar PC';
+    m.classList.toggle('on', mode === 'remote'); m.disabled = !state?.connected || (mode === 'local' && state.sessionMode && state.control?.own !== false && !state.management); // with other people it asks permission, so it does not wait for the screens switch
+    m.title = m.disabled && state?.connected ? 'El dueño de la sala debe activar la gestión de pantallas.' : mode === 'local' ? (state?.control?.own === false ? 'Pedir permiso a ' + name + ' para ver y manejar su PC' : 'Ver y manejar ' + name + ' con tu mouse y tu teclado') : '';    el['tool-files'].disabled = !state?.extras;
     files();
   }
   // Historial compacto de lo compartido, desplegable dentro del panel flotante.
   let filesSig = '';
   function files() {
+    if (el['chat-auto'] && document.activeElement !== el['chat-auto']) el['chat-auto'].checked = !!state?.autoReceive;
     const list = state?.shares || [], sig = JSON.stringify(list); if (sig === filesSig) return; filesSig = sig;
     el['chat-files-count'].textContent = list.length;
     if (!list.length) { const li = document.createElement('li'); li.className = 'empty'; li.textContent = 'Todavía no se compartió nada.'; el['chat-share-list'].replaceChildren(li); return; }
@@ -193,6 +195,7 @@
       const li = document.createElement('li'), info = document.createElement('div'), name = document.createElement('strong'), meta = document.createElement('small'), acts = document.createElement('div');
       name.textContent = f.name; name.title = f.name; meta.textContent = new Date(f.at * 1000).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' }) + ' · ' + (f.mine ? 'Tú' : f.sender); info.append(name, meta); acts.className = 'acts';
       const add = (path, label, action) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'secondary'; b.title = label; b.setAttribute('aria-label', label + ': ' + f.name); b.innerHTML = icon(path); b.onclick = () => api.send({ type: 'shareAction', id: f.id, action }); acts.append(b); };
+      if (!f.mine) add('<path d="M12 4v11m0 0-4-4m4 4 4-4M5 19h14"/>', f.have ? 'Ya está en tu PC' : 'Descargar a mi PC', 'save');
       add('<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>', 'Ver', 'view'); add('<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8"/>', 'Copiar al escritorio', 'desktop');
       li.append(info, acts); return li;
     }));
@@ -211,7 +214,10 @@
     el['chat-panel'].addEventListener('keydown', e => { if (e.key === 'Escape') setOpen(false); });
     document.querySelectorAll('[data-mic-switch]').forEach(b => b.onclick = () => setMic(!mic.on));
     el['mic-toggle'].onclick = () => setMic(!mic.on);
-    el['tool-mouse'].onclick = () => api.send({ type: state?.mode === 'peer' ? 'freeInput' : 'toggleControl' });
+    el['tool-mouse'].onclick = () => { if (state?.mode === 'peer') api.send({ type: 'freeInput' }); else if (state?.mode === 'remote') api.send({ type: 'toggleControl' }); else api.controlPc?.(); };
+    el['chat-drop'].onclick = () => { if (state?.extras) api.send({ type: 'pickFiles' }); else api.toast('Conecta con otra PC para compartir archivos.'); };
+    el['chat-drop'].onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el['chat-drop'].click(); } };
+    el['chat-auto'].onchange = () => api.send({ type: 'autoReceive', on: el['chat-auto'].checked });
     el['tool-files'].onclick = () => api.send({ type: 'pickFiles' });
     el['mic-device'].onchange = async () => { mic.device = el['mic-device'].value; localStorage.setItem('tecMicDevice', mic.device); if (mic.on) { stopMic(); await setMic(true); } };
     el['mic-ptt'].onchange = () => { mic.ptt = el['mic-ptt'].checked; mic.holding = false; sync(); };

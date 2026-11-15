@@ -563,6 +563,7 @@ public sealed partial class EdgeBridge : IDisposable
             if (slot.Status == "connected") slot.Status = "lost";
             StatusChanged?.Invoke(ct.IsCancellationRequested ? "TecLink apagado" : slot.Status == "left" ? $"{slot.Name} salió de la sesión." : slot.Status == "lost" ? $"{slot.Name} se desconectó." : "Conexión perdida. Reintentando...");
             slot.Connection = null; slot.Known = false; slot.Extras = false; slot.Drop = null; slot.Joined = false;
+            ResetControl(slot);
             _roster = new(); _youId = null; // the list of the room belongs to the link that just ended
             lock (_slotLock) _slots.Clear();
             _peerControlling = false;
@@ -676,6 +677,9 @@ public sealed partial class EdgeBridge : IDisposable
                 if (_config.Role == PeerRole.Server) BroadcastRoster();
                 ApplySystemEffects();
                 break;
+            case MessageType.Control:
+                HandleControl(slot, msg.Text);
+                break;
             case MessageType.Profile:
                 HandleProfile(msg.Text);
                 if (_config.Role == PeerRole.Server) BroadcastRoster();
@@ -714,21 +718,21 @@ public sealed partial class EdgeBridge : IDisposable
                 RevokeManagement();
                 break;
             case MessageType.MouseMove:
-                if (!ManagementAllowed) break;
+                if (!ControlAllowedFrom(slot)) break;
                 var localPoint = _desktop.FromWire(new Point(msg.X, msg.Y));
                 InputInjector.MoveTo(localPoint.X, localPoint.Y);
                 break;
             case MessageType.MouseButton:
-                if (!ManagementAllowed) break;
+                if (!ControlAllowedFrom(slot)) break;
                 if (msg.IsDown) _heldButtons.Add(msg.Button); else _heldButtons.Remove(msg.Button);
                 InputInjector.Button(msg.Button, msg.IsDown);
                 break;
             case MessageType.MouseWheel:
-                if (!ManagementAllowed) break;
+                if (!ControlAllowedFrom(slot)) break;
                 InputInjector.Wheel(msg.WheelDelta);
                 break;
             case MessageType.KeyEvent:
-                if (!ManagementAllowed) break;
+                if (!ControlAllowedFrom(slot)) break;
                 if (msg.IsDown) _heldKeys[msg.VkCode] = (msg.ScanCode, msg.IsExtendedKey); else _heldKeys.Remove(msg.VkCode);
                 if (!InputInjector.Key(msg.VkCode, msg.IsDown, msg.IsExtendedKey, msg.ScanCode))
                     StatusChanged?.Invoke("Windows rechazó entrada de teclado; revisa error.log");
@@ -738,7 +742,7 @@ public sealed partial class EdgeBridge : IDisposable
                 if (_config.ShareClipboard) _clipboard.ApplyRemoteText(msg.Text ?? "");
                 break;
             case MessageType.SwitchToRemote:
-                if (!ManagementAllowed) break;
+                if (!ControlAllowedFrom(slot)) break;
                 _lastLocalPoint = null;
                 // The peer just started controlling us. If we were ALSO currently
                 // controlling them (both pressed the hotkey near-simultaneously), we
@@ -797,7 +801,7 @@ public sealed partial class EdgeBridge : IDisposable
             case MessageType.PointerSettings:
                 break; // the other PC never changes how this one looks or feels (older versions did)
             case MessageType.ScreenStart:
-                if (ManagementAllowed && _connection is { } viewer)
+                if ((ManagementAllowed || ControlAllowedFrom(slot)) && _connection is { } viewer)
                 {
                     _screenHost.Start(viewer, msg.Index, msg.Width, msg.Height);
                     ControlChanged?.Invoke("La otra PC está viendo esta pantalla");
@@ -829,7 +833,7 @@ public sealed partial class EdgeBridge : IDisposable
                 return;
             }
             if (_config.UseSpatialMap) return; // An unavailable map must not reactivate legacy exits.
-            if (_connection is null || !_remoteKnown || _peerControlling || !_config.AutomaticSwitching || !ManagementAllowed) return;
+            if (_connection is null || !_remoteKnown || _peerControlling || !_config.AutomaticSwitching || !ManagementAllowed || !OwnRoom) return;
             var desktop = _desktop;
             var point = new Point(e.X, e.Y);
             var source = LocalDisplays().FirstOrDefault(s => s.Bounds.Contains(point));
@@ -957,6 +961,11 @@ public sealed partial class EdgeBridge : IDisposable
             StatusChanged?.Invoke("Atajo presionado, pero no hay conexión con la otra PC todavía");
             return;
         }
+        if (_mode != BridgeMode.Remote && !OwnRoom && !_iControl)
+        {
+            RequestControl(); // another person's PC: only with their permission
+            return;
+        }
         if (_mode != BridgeMode.Remote && !ManagementAllowed)
         {
             StatusChanged?.Invoke("La gestión de pantallas está apagada: el anfitrión debe activarla.");
@@ -980,9 +989,9 @@ public sealed partial class EdgeBridge : IDisposable
     /// screen center.</summary>
     private void EngageRemote(int anchorX, int anchorY, int entryX, int entryY)
     {
-        if (!ManagementAllowed)
+        if (!ManagementAllowed || (!OwnRoom && !_iControl))
         {
-            StatusChanged?.Invoke("La gestión de pantallas está apagada: el anfitrión debe activarla.");
+            StatusChanged?.Invoke(OwnRoom ? "La gestión de pantallas está apagada: el anfitrión debe activarla." : "Para controlar la PC de otra persona usa el botón «Controlar PC»: ella debe permitirlo.");
             return;
         }
         _peerControlling = false;
@@ -1087,7 +1096,7 @@ public sealed partial class EdgeBridge : IDisposable
         var order = _config.ScreenOrder;
         return new
         {
-            version = AppInfo.VersionText, members = MembersView(), maxPeople = MaxPeople, online = OnlineView(), joinedOnline = !string.IsNullOrEmpty(_config.JoinSecret), isHost = _config.Role == PeerRole.Server, mouseWith = _active?.Id ?? "",
+            version = AppInfo.VersionText, control = ControlView(), members = MembersView(), maxPeople = MaxPeople, online = OnlineView(), joinedOnline = !string.IsNullOrEmpty(_config.JoinSecret), isHost = _config.Role == PeerRole.Server, mouseWith = _active?.Id ?? "",
             machineName = OwnName, remoteName = _remoteName, remoteAvatar = _remoteAvatar ?? "", remotePc = _remotePc ?? "",
             profile = ProfileView(), notifications = NotificationsView(), savedRooms = SavedRoomsView(), canSaveRoom = CanSaveRoom,
             joinedByAsk = _askedToJoin,
@@ -1210,7 +1219,7 @@ public sealed partial class EdgeBridge : IDisposable
     }
     public void StartViewing(int displayIndex, int maxWidth, int maxHeight)
     {
-        if (CanUseExtras && ManagementAllowed) _ = _connection!.SendAsync(WireMessage.ScreenStart(displayIndex, maxWidth, maxHeight));
+        if (CanUseExtras && (ManagementAllowed || _iControl)) _ = _connection!.SendAsync(WireMessage.ScreenStart(displayIndex, maxWidth, maxHeight));
     }
 
     public void StopViewing()
@@ -1228,7 +1237,7 @@ public sealed partial class EdgeBridge : IDisposable
         if (active == _viewInput) return;
         if (active)
         {
-            if (!CanUseExtras || !ManagementAllowed) return;
+            if (!CanUseExtras || !(ManagementAllowed || _iControl) || (!OwnRoom && !_iControl)) return;
             if (_mode == BridgeMode.Remote) SwitchToLocal();
             _viewInput = true;
             _peerControlling = false;
@@ -1294,7 +1303,7 @@ public sealed partial class EdgeBridge : IDisposable
         var source = local.FirstOrDefault(d => d.Bounds.Contains(previous)) ?? local.FirstOrDefault(d => d.Bounds.Contains(candidate));
         if (source is null) { _lastLocalPoint = candidate; return; }
         var transition = SpatialNavigation.Find(source, previous, candidate, _spatialLocal, local, _remoteDisplays);
-        if (transition is not null && !Cooling() && (!transition.Route.TargetRemote || (_config.AutomaticSwitching && ManagementAllowed)))
+        if (transition is not null && !Cooling() && (!transition.Route.TargetRemote || (_config.AutomaticSwitching && ManagementAllowed && OwnRoom)))
         {
             e.Suppress = true;
             if (transition.Route.TargetRemote)

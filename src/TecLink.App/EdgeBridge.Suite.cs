@@ -229,7 +229,7 @@ public sealed partial class EdgeBridge
     /// <summary>The same two actions for everyone: "view" (open it) and "desktop" (put a copy on my desktop).</summary>
     public void ShareAction(string id, string action)
     {
-        if (action is not ("view" or "desktop")) return;
+        if (action is not ("view" or "desktop" or "save")) return;
         SharedItem? item;
         lock (_shares) item = _shares.FirstOrDefault(s => s.Id == id);
         if (item is null) return;
@@ -243,6 +243,7 @@ public sealed partial class EdgeBridge
         try
         {
             if (action == "desktop") { Files.CopyToDesktop(item.LocalPath!); Notice?.Invoke("Puesto en tu escritorio: " + item.Name); }
+            else if (action == "save") Notice?.Invoke("Descargado en tu PC (Descargas\\TecLink): " + item.Name);
             else System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(item.LocalPath!) { UseShellExecute = true });
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or InvalidOperationException)

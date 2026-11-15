@@ -200,6 +200,40 @@ if (Environment.GetEnvironmentVariable("TECLINK_TEST_RELAY") is { Length: > 0 } 
     Check(await Until(() => h.Chats.Any(c => c.Text == "hola desde internet de verdad"), 20), "el chat llega por el servidor público");
     h.Cts.Cancel(); g.Cts.Cancel();
 }
+
+// ---------- Phase 6: two modes. "Con otras personas": nobody controls a PC without its owner saying yes. "Mis computadoras": no questions asked ----------
+Console.WriteLine("== Modo de la sala y permiso de control ==");
+{
+    var modePort = port + 60;
+    var mh = Rig.Make(Ui, "MODO-DUEÑO", true, modePort, "P5N8TX");
+    var mg = Rig.Make(Ui, "MODO-INVITADO", false, modePort, "P5N8TX");
+    JsonElement Control(Peer p) => p.State().RootElement.GetProperty("control").Clone();
+    Check(await Until(() => mh.MemberCount() == 2 && mg.MemberCount() == 2, 40), "dueño e invitado se conectan");
+    Check(await Until(() => Control(mg).GetProperty("mode").GetString() == "people" && !Control(mg).GetProperty("own").GetBoolean(), 15), "por defecto la sala es «Con otras personas» y el invitado lo sabe");
+    var granted = 0; mg.Bridge.ControlGranted += () => Interlocked.Increment(ref granted);
+    // asking and being refused
+    mg.Bridge.RequestControl();
+    Check(await Until(() => Control(mh).GetProperty("asking").GetString() == "MODO-INVITADO" && Control(mg).GetProperty("pending").GetBoolean(), 15), "pedir control llega como solicitud al otro (no pasa nada sin su permiso)");
+    mh.Bridge.AnswerControl(false);
+    Check(await Until(() => !Control(mg).GetProperty("pending").GetBoolean() && !Control(mg).GetProperty("iControl").GetBoolean(), 15) && granted == 0, "si dice que no, no se controla nada");
+    // asking and being allowed
+    mg.Bridge.RequestControl();
+    Check(await Until(() => Control(mh).GetProperty("asking").ValueKind == JsonValueKind.String, 15), "una segunda solicitud también llega");
+    mh.Bridge.AnswerControl(true);
+    Check(await Until(() => Control(mg).GetProperty("iControl").GetBoolean() && granted == 1 && Control(mh).GetProperty("controlledBy").GetString() == "MODO-INVITADO", 15), "si dice que sí, el que pidió controla y el otro ve quién lo controla");
+    // stopping from the controlled side
+    mh.Bridge.EndControl();
+    Check(await Until(() => !Control(mg).GetProperty("iControl").GetBoolean() && Control(mh).GetProperty("controlledBy").ValueKind == JsonValueKind.Null, 15), "quien es controlado puede detenerlo cuando quiera");
+    // owner switches the room to "Mis computadoras": no permission needed any more
+    mh.Bridge.SetManagement(true); // in this mode the owner's «Gestión de pantallas» switch is the only gate, as always
+    mh.Bridge.SetRoomMode("own");
+    Check(await Until(() => Control(mg).GetProperty("own").GetBoolean(), 15), "el dueño cambia a «Mis computadoras» y el invitado lo sabe");
+    mg.Bridge.RequestControl();
+    Check(await Until(() => granted == 2, 10) && Control(mh).GetProperty("asking").ValueKind == JsonValueKind.Null, "en «Mis computadoras» no se pregunta nada");
+    mh.Bridge.SetRoomMode("people");
+    Check(await Until(() => !Control(mg).GetProperty("own").GetBoolean(), 15), "y puede volver a «Con otras personas»");
+    mh.Cts.Cancel(); mg.Cts.Cancel(); await Task.Delay(1000);
+}
 Console.WriteLine(failures == 0 ? $"PASS: {checks} comprobaciones de la sala multi-PC" : $"FALLÓ: {failures} de {checks}");
 Environment.Exit(failures == 0 ? 0 : 1);
 

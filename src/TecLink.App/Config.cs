@@ -44,6 +44,8 @@ public sealed class AppConfig
     public bool AutoReceive { get; set; }
     /// <summary>Off by default: TecLink never copies the clipboard between PCs unless the person asks for it.</summary>
     public bool ShareClipboard { get; set; }
+    /// <summary>"own" = all the computers are mine (one mouse and keyboard that cross by themselves); "people" = a room with other people: chat, voice and camera, and controlling somebody's PC only if they allow it.</summary>
+    public string RoomMode { get; set; } = "people";
     /// <summary>Also open this PC's room on the internet (through the online relay), so people in other cities or networks can join.</summary>
     public bool OnlineEnabled { get; set; } = true;
     /// <summary>Secret of this PC's online room (16 characters); it never leaves the two PCs, only a hash of it reaches the relay.</summary>

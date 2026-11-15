@@ -130,7 +130,7 @@ public sealed class TrayAppContext : ApplicationContext
     private void OnControlChanged(string message)
     {
         // Windows notifications are rare on purpose: only when somebody asks to come in or sends you files. Handing the mouse back and forth is silent.
-        if (!message.Contains("pide entrar") && !message.StartsWith("Recibido")) return;
+        if (!message.Contains("pide entrar") && !message.Contains("pide controlar") && !message.StartsWith("Recibido")) return;
         _clipboard.BeginInvoke(() => _trayIcon.ShowBalloonTip(1500, "TecLink", message, ToolTipIcon.Info));
     }
 
@@ -182,7 +182,7 @@ public sealed class TrayAppContext : ApplicationContext
             _trayIcon.ShowBalloonTip(2500, "TecLink", "La otra PC no está conectada o necesita esta misma versión de TecLink.", ToolTipIcon.Warning);
             return;
         }
-        if (!_bridge.ManagementAllowed)
+        if (!_bridge.ManagementAllowed && !_bridge.IControl)
         {
             _trayIcon.ShowBalloonTip(2500, "TecLink", "La gestión de pantallas está apagada. El anfitrión debe activarla.", ToolTipIcon.Warning);
             return;

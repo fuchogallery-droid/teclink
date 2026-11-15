@@ -40,6 +40,7 @@ public enum MessageType : byte
     ShareFetch = 37,      // "<id>": send me that shared file now
     Profile = 38,         // JSON {name,pc,avatar}: how this person wants to appear in the room
     Relay = 39,           // host -> guest: something another guest sent (Text = sender id, Data = the encoded inner message)
+    Control = 41,         // 'ask' / 'ok' / 'no' / 'end' / 'mode:own' / 'mode:people': asking to control the other PC (only with permission) and the room's mode
     Roster = 40,          // host -> guest: JSON {you, members:[{id,name,pc,avatar,host,mouse}]}: who is in the room
     Leave = 30,         // the sender is leaving the session on purpose (not a dropped link)
 }

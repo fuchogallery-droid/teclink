@@ -107,7 +107,7 @@ public sealed partial class EdgeBridge
     {
         var connection = slot.Connection;
         lock (_slotLock) _slots.Remove(slot);
-        slot.Request = null;
+        slot.Request = null; ResetControl(slot);
         if (ReferenceEquals(_active, slot))
         {
             // The active peer left: the same sequence as always (the PC stays listed as "disconnected"), then the next guest, if any, takes its place.
@@ -166,6 +166,7 @@ public sealed partial class EdgeBridge
         }
         _ = conn.SendAsync(WireMessage.JoinResult(true));
         _ = conn.SendAsync(WireMessage.Management(active && _management));
+        _ = conn.SendAsync(WireMessage.ControlMsg("mode:" + RoomMode));
         _ = SendDesktopAsync(conn);
         StatusChanged?.Invoke("Invitado conectado — enviando identificación...");
     }

@@ -103,6 +103,7 @@ public sealed class WireMessage
     public static WireMessage ShareFetch(string id) => new() { Type = MessageType.ShareFetch, Text = id };
     public static WireMessage ProfileMsg(string json) => new() { Type = MessageType.Profile, Text = json };
     public static WireMessage RelayMsg(string senderId, WireMessage inner) => new() { Type = MessageType.Relay, Text = senderId, Data = inner.Encode() };
+    public static WireMessage ControlMsg(string text) => new() { Type = MessageType.Control, Text = text };
     public static WireMessage RosterMsg(string json) => new() { Type = MessageType.Roster, Text = json };
     /// <summary>The message a relay carries (only chat, voice and camera frames are ever relayed).</summary>
     public WireMessage Unwrap() => Decode(Data);
@@ -234,6 +235,7 @@ public sealed class WireMessage
             case MessageType.FileCommand:
             case MessageType.Profile:
             case MessageType.Roster:
+            case MessageType.Control:
                 w.Write(Text ?? "");
                 break;
             case MessageType.SpatialMapAck:
@@ -288,7 +290,7 @@ public sealed class WireMessage
             MessageType.ScreenStop or MessageType.ScreenAck => new WireMessage { Type = type },
             MessageType.CameraFrame or MessageType.Voice => new WireMessage { Type = type, Data = ReadBytes(r) },
             MessageType.ScreenTile => new WireMessage { Type = type, Index = r.ReadInt32(), Width = r.ReadInt32(), Height = r.ReadInt32(), Data = ReadBytes(r) },
-            MessageType.ScreenRemoval or MessageType.ScreenWatch or MessageType.ShareOffer or MessageType.ShareFetch or MessageType.Chat or MessageType.Probe or MessageType.FileList or MessageType.FileCommand or MessageType.Profile or MessageType.Roster => new WireMessage { Type = type, Text = r.ReadString() },
+            MessageType.ScreenRemoval or MessageType.ScreenWatch or MessageType.ShareOffer or MessageType.ShareFetch or MessageType.Chat or MessageType.Probe or MessageType.FileList or MessageType.FileCommand or MessageType.Profile or MessageType.Roster or MessageType.Control => new WireMessage { Type = type, Text = r.ReadString() },
             MessageType.Relay => new WireMessage { Type = type, Text = r.ReadString(), Data = ReadBytes(r) },
             MessageType.Join => new WireMessage { Type = type, Text = r.ReadString() },
             MessageType.JoinResult => new WireMessage { Type = type, Accepted = r.ReadBoolean(), Text = r.ReadString() },

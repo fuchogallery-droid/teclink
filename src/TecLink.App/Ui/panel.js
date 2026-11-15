@@ -19,6 +19,8 @@
     if (message.type === 'controlOff') { TecRoom.controlOff(); return; }
     if (message.type === 'shown') { TecRoom.shown(); return; }
     if (message.type === 'removeAsk') { askConsent(message); return; }
+    if (message.type === 'controlGranted') { openRemote(); return; }
+    if (message.type === 'controlAsk') { $('control-ask-text').textContent = ` pide controlar tu PC: podrá mover tu mouse y escribir en tu teclado hasta que lo detengas. Tú puedes detenerlo cuando quieras con «Detener control».`; $('control-ask').hidden = $('control-scrim').hidden = false; $('control-no').focus(); return; }
     if (message.type === 'update') { TecSocial.updateResult(message); return; }
     if (message.type === 'roomsPresence') { TecSocial.roomsPresence(message.found); return; }
     if (message.type === 'myFiles' || message.type === 'peerFiles') return;
@@ -156,9 +158,12 @@
       if (!host && state.joinCode && !gone) { dot = 'warn'; title = 'Buscando la sesión…'; sub = state.joinNotice || 'La otra PC debe tener TecLink abierto en esta misma red.'; main = { label: 'Cancelar', act: () => send({ type: 'session', action: 'stop' }) }; }
       else { dot = gone ? 'bad' : 'ok'; title = gone || 'Sesión abierta: esperando a la otra PC'; sub = `Tu código: ${state.sessionCode || '—'}. Escríbelo en la otra PC.`; main = { label: 'Cerrar mi sesión', act: () => send({ type: 'session', action: 'stop' }) }; }
     } else if (state.mode === 'remote') { dot = 'live'; title = `Estás controlando la PC de ${name}`; sub = 'Tu mouse y tu teclado están en la otra PC.'; main = { label: 'Volver a mi PC', act: () => send({ type: 'toggleControl' }) }; }
+    else if (state.control?.controlledBy) { dot = 'live'; title = ` está controlando tu PC`; sub = 'Tú decides: puedes detenerlo en cualquier momento.'; main = { label: 'Detener control', act: () => send({ type: 'controlEnd' }) }; }
+    else if (state.control?.iControl) { dot = 'live'; title = `Estás controlando la PC de ${name}`; sub = 'Se abrió su pantalla en otra ventana. Pulsa Esc o aquí para dejar de controlar.'; main = { label: 'Dejar de controlar', act: () => send({ type: 'controlEnd' }) }; }
     else if (state.mode === 'peer') { dot = 'live'; title = `${name} está controlando esta PC`; sub = 'Tu mouse sigue funcionando: muévelo cuando quieras o recupera el control.'; main = { label: 'Recuperar mi mouse', act: () => send({ type: 'freeInput' }) }; }
+    else if (state.control && !state.control.own) { dot = 'ok'; title = `Conectado con ${name}`; sub = state.control.pending ? `Esperando que ${name} permita el control…` : 'Sala con otras personas: chatean, hablan y se ven. Para ver o manejar su PC pulsa «Controlar PC»: la otra persona debe permitirlo.'; main = { label: state.control.pending ? 'Esperando permiso…' : 'Controlar PC', act: () => controlPc() }; }
     else if (state.sessionMode && !state.management) { dot = 'warn'; title = `Conectado con ${name}: el mouse NO pasa todavía`; sub = host ? 'Activa la gestión de pantallas para mover el mouse entre las dos PCs.' : 'El anfitrión debe activar la gestión de pantallas.'; main = host ? { label: 'Activar gestión', act: () => send({ type: 'setManagement', on: true }) } : null; }
-    else { dot = 'ok'; title = `Conectado con ${name}`; sub = 'Lleva el mouse al borde donde las pantallas se tocan, o pulsa el botón, para controlar la otra PC.'; main = { label: `Controlar la PC de ${name}`, act: () => send({ type: 'toggleControl' }) }; }
+    else { dot = 'ok'; title = `Conectado con ${name}`; sub = 'Lleva el mouse al borde donde las pantallas se tocan, o pulsa «Controlar PC» para ver y manejar la otra PC con tu mouse y tu teclado.'; main = { label: 'Controlar PC', act: () => controlPc() }; }
     $('sb-dot').className = 'sb-dot ' + dot; $('sb-title').textContent = title; $('sb-sub').textContent = sub;
     const b = $('sb-main'); b.hidden = !main; if (main) { b.textContent = main.label; b.onclick = main.act; }
     if (!alt && !idle && on) alt = { label: host ? 'Cerrar mi sesión' : 'Salir de la sesión', act: () => send({ type: 'session', action: 'stop' }) };
@@ -260,6 +265,9 @@
     $('host-status').textContent = idleNet && host ? 'Tu sesión está cerrada: nadie puede conectarse a esta PC. Ábrela cuando quieras invitar a alguien.' : legacy ? 'Ahora usas un enlace directo por IP. Pulsa «Abrir mi propia sesión» para invitar con código.' : guest ? 'Estás unido a otra sesión. Sal de ella para invitar a alguien.' : state.connected ? `${state.remoteName || 'Otra PC'} está conectada a tu sesión.` : 'Esperando a que alguien se una con este código.';
     $('host-card').classList.toggle('inactive', !host);
     if (host && (state.members || []).length > 2) $('host-status').textContent = `${state.members.length - 1} PCs conectadas a tu sala. Caben ${state.maxPeople || 10} en total, contigo.`;
+    const mode = state.control?.mode || 'people', owner = state.role === 'Server';
+    $('mode-own').setAttribute('aria-checked', mode === 'own'); $('mode-people').setAttribute('aria-checked', mode === 'people'); $('mode-own').disabled = $('mode-people').disabled = !owner;
+    $('mode-note').textContent = owner ? (mode === 'own' ? 'Con «Mis computadoras» el mouse y el teclado cruzan solos entre tus PCs.' : 'Con «Con otras personas» nadie mueve tu mouse sin tu permiso: el botón «Controlar PC» lo pide.') : 'Lo decide quien abrió la sala.';
     const onl = state.online || {}; $('online-switch').setAttribute('aria-checked', !!onl.enabled); if (document.activeElement !== $('relay-host')) $('relay-host').value = onl.pinned ? (onl.relayHost || '') : '';
     $('online-invite-row').hidden = !onl.invite; $('online-invite').textContent = onl.invite || '';
     $('relay-status').textContent = onl.relayHost ? `Servidor actual: ${onl.relayHost}${onl.pinned ? ' (fijado a mano)' : ''}. ${onl.status || ''}` : (onl.status || 'Todavía no se buscó el servidor: se busca solo al abrir tu sesión.');
@@ -348,10 +356,10 @@
   $('open-received').onclick = () => send({ type: 'openReceived' });
   $('dropzone').onclick = () => { if (state?.extras) send({ type: 'pickFiles' }); };
   $('dropzone').onkeydown = e => { if ((e.key === 'Enter' || e.key === ' ') && state?.extras) { e.preventDefault(); send({ type: 'pickFiles' }); } };
-  addEventListener('dragover', e => { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = state?.extras ? 'copy' : 'none'; $('dropzone').classList.toggle('over', !!state?.extras); });
-  addEventListener('dragleave', e => { if (!e.relatedTarget) $('dropzone').classList.remove('over'); });
+  addEventListener('dragover', e => { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = state?.extras ? 'copy' : 'none'; $('dropzone').classList.toggle('over', !!state?.extras); document.getElementById('chat-drop')?.classList.toggle('over', !!state?.extras); });
+  addEventListener('dragleave', e => { if (!e.relatedTarget) { $('dropzone').classList.remove('over'); document.getElementById('chat-drop')?.classList.remove('over'); } });
   addEventListener('drop', e => {
-    e.preventDefault(); $('dropzone').classList.remove('over');
+    e.preventDefault(); $('dropzone').classList.remove('over'); document.getElementById('chat-drop')?.classList.remove('over');
     const files = [...(e.dataTransfer?.files || [])];
     if (!state?.extras || !files.length) return;
     if (preview) { window.__tecMessages.push({ type: 'dropFiles', count: files.length }); return; }
@@ -380,7 +388,21 @@
   };
   $('restore-screens').onclick = () => { draft.placements.forEach(p => { delete p.hidden; }); if (M.overlaps(rects())) draft.placements = M.defaults(state); dirty = true; buildNodes(); update(); fit(); autoSave(); toast('Pantallas restauradas.'); };
   const openTab = name => document.querySelector(`[data-tab=${name}]`).click();
-  TecChat.init({ send, toast, onOpen: open => { TecRoom.setDocked(open); if (open) openTab('room'); else if (state) update(); } });
+  // Controlar PC: abre la otra PC en una ventana donde el mouse y el teclado son de verdad (se puede abrir carpetas, arrastrar, escribir). Esc para volver.
+  function controlPc() {
+    if (!state?.connected) { toast('Conecta primero con otra PC.'); return; }
+    send({ type: 'controlRequest' });
+    toast(state.control && !state.control.own ? 'Pidiendo permiso a ' + (state.remoteName || 'la otra persona') + '… cuando lo permita se abre su PC.' : 'Abriendo la otra PC…');
+  }
+  // La otra PC (o su dueño) dijo que sí: se abre su pantalla en una ventana donde el mouse y el teclado son de verdad. Esc para volver.
+  function openRemote() {
+    const screen = (state?.remote || [])[0]; if (!screen) { toast('La otra PC todavía no mostró su pantalla.'); return; }
+    send({ type: 'fullscreen', remote: true, id: screen.id }); toast('Controlando ' + (state.remoteName || 'la otra PC') + '. Pulsa Esc para volver.');
+  }  $('room-control').onclick = controlPc;
+  const answerControl = accept => { send({ type: 'controlAnswer', accept }); $('control-ask').hidden = $('control-scrim').hidden = true; toast(accept ? 'Permitiste el control. Pulsa «Detener control» cuando quieras.' : 'No se permitió el control.'); };
+  $('control-yes').onclick = () => answerControl(true); $('control-no').onclick = () => answerControl(false);
+  $('mode-own').onclick = () => send({ type: 'setRoomMode', mode: 'own' }); $('mode-people').onclick = () => send({ type: 'setRoomMode', mode: 'people' });
+  TecChat.init({ send, toast, controlPc, onOpen: open => { TecRoom.setDocked(open); if (open) openTab('room'); else if (state) update(); } });
   TecSocial.init({ send, toast });
   TecRoom.init({ send, toast, key: M.key, changed: () => { if (state) update(); } });
   // Botón "Cambiar de pantalla": recorre todas las pantallas (esta PC y la otra).
