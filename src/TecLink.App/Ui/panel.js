@@ -349,6 +349,7 @@
   // Configuración (engranaje): apariencia de la plataforma y ratón.
   const drawer = $('settings-drawer'), scrim = $('settings-scrim');
   function openSettings(open) { drawer.hidden = scrim.hidden = !open; if (open) $('settings-close').focus(); else $('settings-open').focus(); }
+  $('manual-open').onclick = () => send({ type: 'downloadManual' });
   $('settings-open').onclick = () => openSettings(true); $('settings-close').onclick = () => openSettings(false); scrim.onclick = () => openSettings(false);
   addEventListener('keydown', e => { if (e.key === 'Escape' && !drawer.hidden) openSettings(false); });
   const colorMap = { bg: ['--bg'], panel: ['--panel', '--raised'], line: ['--line', '--grid', '--brand'], accent: ['--accent'], text: ['--text'] };

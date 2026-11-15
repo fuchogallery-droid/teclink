@@ -200,6 +200,21 @@ public sealed class ControlPanelForm : Form
                     Directory.CreateDirectory(_bridge.Files.ReceiveFolder);
                     System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(_bridge.Files.ReceiveFolder) { UseShellExecute = true });
                     break;
+                case "downloadManual":
+                    try
+                    {
+                        // El manual viaja dentro de la app (Ui\manual); se guarda en Descargas y se abre.
+                        var source = Path.Combine(AppContext.BaseDirectory, "Ui", "manual", "TecLink-Manual.pdf");
+                        var downloads = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+                        Directory.CreateDirectory(downloads);
+                        var target = Path.Combine(downloads, "TecLink-Manual.pdf");
+                        File.Copy(source, target, true);
+                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(target) { UseShellExecute = true });
+                        Post(new { type = "toast", message = "Manual guardado en Descargas: TecLink-Manual.pdf" });
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    { Post(new { type = "error", message = "No se pudo guardar el manual. Revisa que la carpeta Descargas esté disponible." }); }
+                    break;
                 case "setPower": _setPower(root.GetProperty("on").GetBoolean()); RefreshState(); break;
                 case "checkUpdate":
                     // Only when the person presses the button: TecLink never contacts anything by itself.
