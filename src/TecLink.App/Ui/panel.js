@@ -259,6 +259,9 @@
     $('host-status').textContent = idleNet && host ? 'Tu sesión está cerrada: nadie puede conectarse a esta PC. Ábrela cuando quieras invitar a alguien.' : legacy ? 'Ahora usas un enlace directo por IP. Pulsa «Abrir mi propia sesión» para invitar con código.' : guest ? 'Estás unido a otra sesión. Sal de ella para invitar a alguien.' : state.connected ? `${state.remoteName || 'Otra PC'} está conectada a tu sesión.` : 'Esperando a que alguien se una con este código.';
     $('host-card').classList.toggle('inactive', !host);
     if (host && (state.members || []).length > 2) $('host-status').textContent = `${state.members.length - 1} PCs conectadas a tu sala. Caben ${state.maxPeople || 10} en total, contigo.`;
+    const onl = state.online || {}; $('online-switch').setAttribute('aria-checked', !!onl.enabled); if (document.activeElement !== $('relay-host')) $('relay-host').value = onl.relayHost || '';
+    $('online-invite-row').hidden = !onl.invite; $('online-invite').textContent = onl.invite || '';
+    $('online-note').textContent = !onl.enabled ? 'Para invitar a alguien de otra ciudad o red. Los datos viajan cifrados de una PC a la otra; el servidor solo los pasa y no guarda nada.' : !onl.relayHost ? 'Falta la dirección del servidor en línea (abajo, en «Servidor en línea»).' : onl.invite ? 'Tu sala también está abierta por internet. Pásale la invitación en línea a quien quieras invitar.' : 'Se abrirá por internet cuando abras tu sesión.';
     const addrs = state.addresses || [];
     const remote = addrs.find(a => a.startsWith('100.')); // la direccion de Tailscale, alcanzable desde cualquier ciudad
     $('copy-remote').hidden = !(host && active && remote); $('copy-remote').dataset.invite = remote ? (state.sessionCode || '').replace('-', '') + '@' + remote : '';
@@ -288,10 +291,13 @@
   }
   $('management').onclick = () => send({ type: 'setManagement', on: $('management').getAttribute('aria-checked') !== 'true' });
   $('copy-code').onclick = async () => { const code = (state?.sessionCode || '').replace('-', ''); if (!code) return; try { await navigator.clipboard.writeText(state.sessionCode); toast('Código copiado: ' + state.sessionCode); } catch { toast('Tu código es ' + state.sessionCode); } };
-  // Se acepta CODIGO o CODIGO@direccion (la invitacion para otra red): la direccion pasa sola a su casilla.
+  // Se acepta CODIGO, CODIGO@direccion (otra red con Tailscale) o la INVITACION EN LINEA (22 letras/numeros + @servidor).
   const pretty = raw => raw.length > 3 ? raw.slice(0, 3) + '-' + raw.slice(3) : raw;
+  const groups = raw => [raw.slice(0, 3), raw.slice(3, 6), raw.slice(6, 10), raw.slice(10, 14), raw.slice(14, 18), raw.slice(18, 22)].filter(Boolean).join('-');
+  const isOnline = v => v.split('@')[0].replace(/[^A-Za-z0-9]/g, '').length > 6;
   $('join-code').oninput = e => {
     const v = e.target.value;
+    if (isOnline(v)) { const [c, ...rest] = v.split('@'); e.target.value = groups(c.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 22)) + (rest.length ? '@' + rest.join('@').trim() : ''); return; }
     if (v.includes('@')) {
       const [c, ...rest] = v.split('@'), raw = c.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6), address = rest.join('@').trim();
       $('join-address').value = address; document.querySelector('.join-more').open = true;
@@ -299,9 +305,23 @@
     }
     const raw = v.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6); e.target.value = pretty(raw);
   };
-  $('copy-remote').onclick = async () => { const text = $('copy-remote').dataset.invite; if (!text) return; const shown = text.slice(0, 3) + '-' + text.slice(3); try { await navigator.clipboard.writeText(shown); toast('Invitación copiada: ' + shown + '. Pégala en el campo de código de la otra PC.'); } catch { toast('Tu invitación es ' + shown); } };
+  $('join-btn').onclick = () => {
+    const value = $('join-code').value.trim();
+    if (isOnline(value)) {
+      if (value.split('@')[0].replace(/[^A-Za-z0-9]/g, '').length !== 22) { toast('La invitación en línea tiene 22 letras y números.'); return; }
+      send({ type: 'session', action: 'join', code: value, address: '' }); toast('Conectando por internet…'); return;
+    }
+    const [c, ...rest] = value.split('@'), code = c.replace(/[^A-Za-z0-9]/g, ''), address = (rest.join('@') || $('join-address').value).trim();
+    if (code.length !== 6) { toast('El código tiene 6 letras o números.'); return; }
+    send({ type: 'session', action: 'join', code, address }); toast(address ? 'Conectando con ' + address + '…' : 'Buscando la sesión en tu red…');
+  };
+  // Sala en línea del dueño
+  const sendOnline = on => send({ type: 'setOnline', on, relay: $('relay-host').value.trim() });
+  $('online-switch').onclick = () => { if (!$('relay-host').value.trim() && $('online-switch').getAttribute('aria-checked') !== 'true') { document.querySelector('.relay-more').open = true; toast('Escribe primero la dirección del servidor en línea.'); $('relay-host').focus(); return; } sendOnline($('online-switch').getAttribute('aria-checked') !== 'true'); };
+  $('relay-save').onclick = () => { sendOnline($('online-switch').getAttribute('aria-checked') === 'true'); toast('Servidor guardado.'); };
+  $('copy-online').onclick = async () => { const text = state?.online?.invite || ''; if (!text) return; try { await navigator.clipboard.writeText(text); toast('Invitación en línea copiada. Pásala a quien quieras invitar.'); } catch { toast('Tu invitación: ' + text); } };
+  $('renew-online').onclick = () => { send({ type: 'renewOnline' }); toast('Invitación renovada: las anteriores ya no sirven.'); };  $('copy-remote').onclick = async () => { const text = $('copy-remote').dataset.invite; if (!text) return; const shown = text.slice(0, 3) + '-' + text.slice(3); try { await navigator.clipboard.writeText(shown); toast('Invitación copiada: ' + shown + '. Pégala en el campo de código de la otra PC.'); } catch { toast('Tu invitación es ' + shown); } };
   $('join-code').onkeydown = e => { if (e.key === 'Enter') $('join-btn').click(); };
-  $('join-btn').onclick = () => { const [c, ...rest] = $('join-code').value.split('@'), code = c.replace(/[^A-Za-z0-9]/g, ''), address = (rest.join('@') || $('join-address').value).trim(); if (code.length !== 6) { toast('El código tiene 6 letras o números.'); return; } send({ type: 'session', action: 'join', code, address }); toast(address ? 'Conectando con ' + address + '…' : 'Buscando la sesión en tu red…'); };
   $('repair-run').onclick = () => { $('diag-out').hidden = false; $('diag-out').textContent = 'Reparando: si Windows pide permiso, pulsa Sí…'; send({ type: 'repair' }); };
   $('diag-run').onclick = () => { $('diag-run').disabled = true; $('diag-run').textContent = 'Probando…'; $('diag-out').hidden = false; $('diag-out').textContent = 'Revisando la red…'; send({ type: 'diagnose' }); };
   $('diag-copy').onclick = async () => { try { await navigator.clipboard.writeText($('diag-out').textContent); toast('Informe copiado. Pégalo donde te lo pidan.'); } catch { toast('Selecciona el texto del informe y cópialo.'); } };

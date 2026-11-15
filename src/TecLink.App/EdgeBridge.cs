@@ -1,6 +1,7 @@
 using TecLink.App.Input;
 using TecLink.App.Native;
 using TecLink.Core.Networking;
+using TecLink.Core.Networking.Relay;
 using TecLink.Core.Protocol;
 using TecLink.Core;
 using Microsoft.Win32;
@@ -223,12 +224,23 @@ public sealed partial class EdgeBridge : IDisposable
 
     public void StartHosting()
     {
-        _config.Role = PeerRole.Server; _config.JoinCode = ""; _joinNotice = "";
+        _config.Role = PeerRole.Server; _config.JoinCode = ""; _config.JoinSecret = ""; _config.JoinRelay = ""; _joinNotice = "";
         _config.Save();
     }
 
     public void JoinSession(string? code, string? address = null)
     {
+        if (OnlineInvite.TryParse(code, out var inviteCode, out var inviteSecret, out var inviteRelay))
+        {
+            // An online invitation (code + secret, and the relay it uses): it works from any network.
+            if (SessionDiscovery.Normalize(_config.SessionCode) == inviteCode) throw new ArgumentException("Esa invitación es de esta misma PC.");
+            if (string.IsNullOrWhiteSpace(inviteRelay) && string.IsNullOrWhiteSpace(_config.RelayHost)) throw new ArgumentException("A esa invitación le falta el servidor en línea (termina en @servidor).");
+            _config.Role = PeerRole.Client; _config.JoinCode = inviteCode; _config.JoinSecret = inviteSecret; _config.JoinRelay = CleanHost(inviteRelay ?? _config.RelayHost);
+            _config.PeerHost = ""; _joinNotice = ""; _joinRefused = false; _askedToJoin = _nextJoinAsk; _nextJoinAsk = false;
+            _config.Save();
+            return;
+        }
+        _config.JoinSecret = ""; _config.JoinRelay = "";
         // One pasted text can carry both: ABC-DEF@100.73.208.1 (the owner's invitation for somebody on another network).
         if (code is not null && code.Contains('@')) { var split = code.Split('@', 2); code = split[0]; if (string.IsNullOrWhiteSpace(address)) address = split[1]; }
         var clean = SessionDiscovery.Normalize(code) ?? throw new ArgumentException("El código tiene 6 letras o números. Revísalo.");
@@ -469,7 +481,8 @@ public sealed partial class EdgeBridge : IDisposable
                 // An address was given (another city, a VPN like Tailscale): go straight to it first. Searching the local network can
                 // only find PCs next to this one, and it would waste seconds here.
                 PeerConnection? direct = null;
-                if (guestCode is not null && !string.IsNullOrWhiteSpace(_config.PeerHost))
+                if (guestCode is not null && !string.IsNullOrEmpty(_config.JoinSecret)) direct = await ConnectOnlineAsync(ct); // through the internet relay
+                else if (guestCode is not null && !string.IsNullOrWhiteSpace(_config.PeerHost))
                 {
                     var wanted = _config.PeerHost.Trim();
                     StatusChanged?.Invoke($"Conectando con {wanted}...");
@@ -1074,7 +1087,7 @@ public sealed partial class EdgeBridge : IDisposable
         var order = _config.ScreenOrder;
         return new
         {
-            members = MembersView(), maxPeople = MaxPeople, isHost = _config.Role == PeerRole.Server, mouseWith = _active?.Id ?? "",
+            members = MembersView(), maxPeople = MaxPeople, online = OnlineView(), joinedOnline = !string.IsNullOrEmpty(_config.JoinSecret), isHost = _config.Role == PeerRole.Server, mouseWith = _active?.Id ?? "",
             machineName = OwnName, remoteName = _remoteName, remoteAvatar = _remoteAvatar ?? "", remotePc = _remotePc ?? "",
             profile = ProfileView(), notifications = NotificationsView(), savedRooms = SavedRoomsView(), canSaveRoom = CanSaveRoom,
             joinedByAsk = _askedToJoin,

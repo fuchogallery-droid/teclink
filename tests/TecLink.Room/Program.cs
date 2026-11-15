@@ -1,6 +1,7 @@
 // Real bridges talking to each other in one process (no hooks, no panel): one owner and several guests on loopback.
 // Checks the room of up to 10 PCs: who is in it, chat/voice/camera for everyone, the mouse peer switch, leaving and the 10-PC limit.
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using System.Windows.Forms;
 using TecLink.App;
 
@@ -149,6 +150,56 @@ Console.WriteLine("== Ganchos del sistema (se instalan y se retiran sin dejar na
     Check(!fresh.ShareClipboard && !fresh.AutoReceive, "de fábrica no se comparte el portapapeles ni se reciben archivos solos");
 }
 
+// ---------- Phase 4: a room on the internet through the relay (the two sides only connect OUT; the relay sees only encrypted data) ----------
+Console.WriteLine("== Sala en línea a través del servidor puente ==");
+{
+    var relayPort = 58300;
+    var builder = Microsoft.AspNetCore.Builder.WebApplication.CreateBuilder();
+    builder.Logging.ClearProviders();
+    var relay = builder.Build();
+    TecLink.Relay.RelayServer.Map(relay);
+    relay.Urls.Add($"http://127.0.0.1:{relayPort}");
+    await relay.StartAsync();
+    var relayHost = $"127.0.0.1:{relayPort}";
+    var secret = TecLink.Core.Networking.Relay.OnlineInvite.NewSecret();
+    var onlineHost = Rig.Make(Ui, "NUBE-HOST", true, port + 30, "J4Q7PX", hostOnlineRelay: relayHost, hostOnlineSecret: secret);
+    var invite = TecLink.Core.Networking.Relay.OnlineInvite.Format("J4Q7PX", secret, relayHost);
+    Check(await Until(() => onlineHost.Bridge.OnlineInviteText == invite, 5), "el dueño arma la invitación en línea (código + secreto + servidor)");
+    Check(TecLink.Core.Networking.Relay.OnlineInvite.TryParse(invite, out var pc, out var ps, out var ph) && pc == "J4Q7PX" && ps == secret && ph == relayHost, "la invitación se vuelve a leer completa");
+    await Task.Delay(1500); // the room must be open on the relay before anybody comes
+    var a = Rig.Make(Ui, "NUBE-A", false, port + 30, "J4Q7PX", invite: invite);
+    var b = Rig.Make(Ui, "NUBE-B", false, port + 30, "J4Q7PX", invite: invite);
+    Check(await Until(() => onlineHost.MemberCount() == 3, 40), "dos invitados entran por el puente y el dueño los ve (3 PCs)");
+    Check(await Until(() => a.MemberCount() == 3 && b.MemberCount() == 3, 20), "cada invitado ve a las 3 PCs");
+    a.Bridge.SendChat("hola por internet");
+    Check(await Until(() => onlineHost.Chats.Any(c => c.Text == "hola por internet") && b.Chats.Any(c => c.Text == "hola por internet" && c.From == "NUBE-A")), "el chat llega al dueño y al otro invitado a través del puente");
+    onlineHost.Bridge.SendChat("respondo desde el dueño");
+    Check(await Until(() => a.Chats.Any(c => c.Text == "respondo desde el dueño") && b.Chats.Any(c => c.Text == "respondo desde el dueño")), "el dueño también les escribe");
+    b.Bridge.SendCameraFrame(new byte[2000]);
+    Check(await Until(() => onlineHost.Cams.Any(c => c.Length == 2000) && a.Cams.Any(c => c.Length == 2000)), "la cámara viaja cifrada por el puente");
+    // somebody with a wrong secret (a guessed or old invitation) gets nothing
+    var wrong = TecLink.Core.Networking.Relay.OnlineInvite.Format("J4Q7PX", TecLink.Core.Networking.Relay.OnlineInvite.NewSecret(), relayHost);
+    var intruder = Rig.Make(Ui, "INTRUSO", false, port + 30, "J4Q7PX", invite: wrong);
+    Check(await Until(() => intruder.JoinNotice().Length > 0, 20), "una invitación equivocada recibe un aviso claro");
+    await Task.Delay(1000);
+    Check(onlineHost.MemberCount() == 3, "el intruso no entra a la sala");
+    foreach (var p in new[] { onlineHost, a, b, intruder }) p.Cts.Cancel();
+    await relay.StopAsync();
+}
+
+// ---------- Phase 5 (only when TECLINK_TEST_RELAY is set): the same, but through a relay that really is on the internet ----------
+if (Environment.GetEnvironmentVariable("TECLINK_TEST_RELAY") is { Length: > 0 } publicRelay)
+{
+    Console.WriteLine("== Sala en línea por el servidor puente PÚBLICO (" + publicRelay + ") ==");
+    var secret2 = TecLink.Core.Networking.Relay.OnlineInvite.NewSecret();
+    var h = Rig.Make(Ui, "INTERNET-HOST", true, port + 40, "M6T2RW", hostOnlineRelay: publicRelay, hostOnlineSecret: secret2);
+    await Task.Delay(3000);
+    var g = Rig.Make(Ui, "INTERNET-G", false, port + 40, "M6T2RW", invite: TecLink.Core.Networking.Relay.OnlineInvite.Format("M6T2RW", secret2, publicRelay));
+    Check(await Until(() => h.MemberCount() == 2 && g.MemberCount() == 2, 60), "el invitado entra a la sala por el servidor público");
+    g.Bridge.SendChat("hola desde internet de verdad");
+    Check(await Until(() => h.Chats.Any(c => c.Text == "hola desde internet de verdad"), 20), "el chat llega por el servidor público");
+    h.Cts.Cancel(); g.Cts.Cancel();
+}
 Console.WriteLine(failures == 0 ? $"PASS: {checks} comprobaciones de la sala multi-PC" : $"FALLÓ: {failures} de {checks}");
 Environment.Exit(failures == 0 ? 0 : 1);
 
@@ -165,14 +216,17 @@ sealed class Peer
 
 static class Rig
 {
-    public static Peer Make(Func<Func<object>, object> ui, string name, bool host, int port, string code)
+    public static Peer Make(Func<Func<object>, object> ui, string name, bool host, int port, string code, string? invite = null, string? hostOnlineRelay = null, string? hostOnlineSecret = null)
     {
         var cts = new CancellationTokenSource();
         var bridge = (EdgeBridge)ui(() =>
         {
             var clip = new ClipboardWatcher(); _ = clip.Handle;
-            var cfg = new AppConfig { MachineName = name, Port = port, SessionCode = host ? code : "ZZZZZZ", Role = host ? PeerRole.Server : PeerRole.Client, JoinCode = host ? "" : code, PeerHost = "127.0.0.1" };
-            return new EdgeBridge(cfg, clip);
+            var cfg = new AppConfig { MachineName = name, Port = port, SessionCode = host ? code : "ZZZZZZ", Role = host ? PeerRole.Server : PeerRole.Client, JoinCode = host ? "" : code, PeerHost = invite is null ? "127.0.0.1" : "" };
+            if (hostOnlineRelay is not null) { cfg.OnlineEnabled = true; cfg.RelayHost = hostOnlineRelay; cfg.OnlineSecret = hostOnlineSecret!; }
+            var b = new EdgeBridge(cfg, clip);
+            if (invite is not null) b.JoinSession(invite);
+            return b;
         });
         var peer = new Peer { Bridge = bridge, Name = name, Cts = cts };
         bridge.ChatReceived += (from, text) => { lock (peer.Chats) peer.Chats.Add((from, text)); };

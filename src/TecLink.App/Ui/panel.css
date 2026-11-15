@@ -350,3 +350,7 @@ body.cinema #chat-panel{transition:none}
 .members-panel{display:flex;flex-direction:column;min-height:0}
 .members-panel .members{overflow:auto;max-height:52vh}
 .member .member-act{min-height:34px;padding:0 10px;font-size:12px;margin-top:6px;width:100%}
+
+.online-box{display:flex;flex-direction:column;gap:10px;border-top:1px solid var(--line);padding-top:12px;margin-top:4px}
+.online-invite code{display:block;padding:10px 12px;border:1px solid var(--accent);border-radius:8px;background:var(--bg);font:600 15px/1.4 ui-monospace,Consolas,monospace;overflow-wrap:anywhere;user-select:all}
+.relay-more{border:1px solid var(--line);border-radius:8px;padding:0 12px 12px}.relay-more>summary{cursor:pointer;min-height:44px;display:flex;align-items:center}.relay-more input{width:100%;margin:6px 0 10px}

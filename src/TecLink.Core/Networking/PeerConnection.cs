@@ -12,8 +12,8 @@ namespace TecLink.Core.Networking;
 /// </summary>
 public sealed class PeerConnection : IAsyncDisposable
 {
-    private readonly TcpClient _client;
-    private readonly NetworkStream _stream;
+    private readonly TcpClient? _client;
+    private readonly Stream _stream;
     private readonly object _queueLock = new();
     private readonly LinkedList<Outbound> _outbound = new();
     private readonly SemaphoreSlim _sendSignal = new(0, 1);
@@ -48,6 +48,12 @@ public sealed class PeerConnection : IAsyncDisposable
         _sendTask = SendLoopAsync();
     }
 
+    /// <summary>Any byte stream (for example the encrypted one that goes through the online relay).</summary>
+    public PeerConnection(Stream stream)
+    {
+        _stream = stream;
+        _sendTask = SendLoopAsync();
+    }
     public bool IsDisconnected => Volatile.Read(ref _disconnected) == 1;
 
     public void StartReceiving() => _receiveTask ??= ReceiveLoopAsync(_cts.Token);
@@ -194,7 +200,7 @@ public sealed class PeerConnection : IAsyncDisposable
     {
         _cts.Cancel();
         _stream.Dispose();
-        _client.Dispose();
+        _client?.Dispose();
         await _sendTask;
         if (_receiveTask is { } receive) await receive;
         _sendSignal.Dispose();

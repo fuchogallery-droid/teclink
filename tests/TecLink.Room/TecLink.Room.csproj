@@ -8,5 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/TecLink.App/TecLink.App.csproj" />
+    <ProjectReference Include="../../src/TecLink.Relay/TecLink.Relay.csproj" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 </Project>

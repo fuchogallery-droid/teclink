@@ -74,20 +74,23 @@ public sealed class HostAdmission : IAsyncDisposable
             while (!ct.IsCancellationRequested)
             {
                 var client = await _listener.AcceptTcpClientAsync(ct);
-                _ = AdmitAsync(client, ct); // concurrently: a silent stranger must not delay the real guest
+                _ = AdmitAsync(client, null, null, ct); // concurrently: a silent stranger must not delay the real guest
             }
         }
         catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or SocketException) { }
         finally { _admitted.Writer.TryComplete(); }
     }
 
-    private async Task AdmitAsync(TcpClient client, CancellationToken ct)
+    /// <summary>A connection that did not come through the listening port (the online relay): same checks, same queue.</summary>
+    public void AdmitExternal(PeerConnection connection, string who) => _ = AdmitAsync(null, connection, who, _cts.Token);
+
+    private async Task AdmitAsync(TcpClient? client, PeerConnection? external, string? externalWho, CancellationToken ct)
     {
-        var who = (client.Client.RemoteEndPoint as IPEndPoint)?.Address.ToString() ?? "?";
+        var who = client is null ? externalWho ?? "?" : (client.Client.RemoteEndPoint as IPEndPoint)?.Address.ToString() ?? "?";
         PeerConnection? connection = null;
         try
         {
-            connection = new PeerConnection(client);
+            connection = external ?? new PeerConnection(client!);
             var holder = new AdmittedConnection(connection, who);
             var joined = new TaskCompletionSource<WireMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
             connection.MessageReceived += message =>

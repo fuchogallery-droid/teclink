@@ -242,6 +242,12 @@ public sealed class ControlPanelForm : Form
                     if (wanted.StartsWith("https://github.com/fuchogallery-droid/teclink/releases", StringComparison.Ordinal))
                         System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(wanted) { UseShellExecute = true });
                     break;
+                case "setOnline":
+                    _bridge.SetOnline(root.GetProperty("on").GetBoolean(), root.TryGetProperty("relay", out var relayText) ? relayText.GetString() : null);
+                    if (_bridge.HostingNow) _session("open", null, null); // the room opens or closes on the internet with the session
+                    RefreshState();
+                    break;
+                case "renewOnline": _bridge.RenewOnlineInvite(); if (_bridge.HostingNow) _session("open", null, null); RefreshState(); break;
                 case "setClipboard": _bridge.SetShareClipboard(root.GetProperty("on").GetBoolean()); RefreshState(); break;
                 case "useMouse": _bridge.UseMouseWith(root.GetProperty("id").GetString() ?? ""); break;
                 case "kickGuest": _bridge.KickGuest(root.GetProperty("id").GetString() ?? ""); break;

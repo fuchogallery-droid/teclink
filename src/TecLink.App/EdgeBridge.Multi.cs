@@ -73,7 +73,7 @@ public sealed partial class EdgeBridge
                 try
                 {
                     if (Joined().Length == 0) StatusChanged?.Invoke($"Sesión abierta — código {SessionDiscovery.Pretty(_config.SessionCode)}");
-                    admission ??= CreateAdmission(ct);
+                    if (admission is null) { admission = CreateAdmission(ct); _hostAdmission = admission; StartOnlineRoom(ct); }
                     var guest = await admission.Guests.ReadAsync(ct);
                     _ = RunSlotAsync(guest, ct);   // each guest lives in its own task; the loop goes back to wait for the next one
                 }
