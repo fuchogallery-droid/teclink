@@ -657,6 +657,8 @@ public sealed partial class EdgeBridge : IDisposable
                 _remoteKnown = true; _peerStatus = "connected";
                 _remotePc = msg.MachineName ?? "Otra PC";
                 _remoteName = _remoteProfileName ?? _remotePc;
+                // Una PC que el dueno ya marco como suya entra sola en «Mis computadoras».
+                if (_config.Role == PeerRole.Server && _sessionMode && IsOwnPc(_remotePc) && RoomMode != RoomOwn) SetRoomMode(RoomOwn);
                 _remoteDisplays = msg.Displays.Length > 0 ? msg.Displays
                     : new[] { new DisplayInfo("desktop", 0, 0, _remoteWidth, _remoteHeight) };
                 _peerMapSupported = msg.SupportsSpatialMap;

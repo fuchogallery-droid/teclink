@@ -44,10 +44,11 @@
     const list = [];
     for (const r of (n.requests && n.requests.length ? n.requests : req ? [req] : [])) {
       const box = document.createElement('div'); box.className = 'notif-item request';
-      box.innerHTML = '<strong></strong><span class="notif-empty">Quiere entrar a tu sala. Tú decides.</span><div class="file-actions"><button class="primary" type="button">Aceptar</button><button class="secondary" type="button">Rechazar</button></div>';
+      box.innerHTML = '<strong></strong><span class="notif-empty">Quiere entrar a tu sala. Tú decides.</span><div class="file-actions"><button class="primary" type="button">Es otra persona</button><button class="secondary" type="button">Es mi otra PC</button><button class="secondary danger" type="button">Rechazar</button></div>';
       box.querySelector('strong').textContent = `${r.name} pide entrar a tu sala`;
-      const [yes, no] = box.querySelectorAll('button');
-      yes.onclick = () => { api.send({ type: 'joinAnswer', id: r.id, accept: true }); };
+      const [yes, mine, no] = box.querySelectorAll('button');
+      yes.onclick = () => { api.send({ type: 'joinAnswer', id: r.id, accept: true, own: false }); };
+      mine.onclick = () => { api.send({ type: 'joinAnswer', id: r.id, accept: true, own: true }); };
       no.onclick = () => { api.send({ type: 'joinAnswer', id: r.id, accept: false }); };
       list.push(box);
     }    for (const e of recent) { const box = document.createElement('div'); box.className = 'notif-item'; box.innerHTML = '<span></span><time></time>'; box.firstChild.textContent = e.text; box.lastChild.textContent = ago(e.at); list.push(box); }
@@ -77,19 +78,8 @@
     }));
   }
 
-  // ---- Versión nueva: solo al pulsar el botón ----
-  let updateUrl = '';
-  function updateResult(m) {
-    const note = $('update-note'); $('update-check').disabled = false; $('update-check').textContent = 'Buscar versión nueva';
-    $('dl-check').disabled = false; $('dl-check').textContent = 'Buscar versión nueva';
-    if (!m.ok) { const t = 'No se pudo consultar. Revisa tu conexión a internet e inténtalo de nuevo.'; note.textContent = t; $('dl-note').textContent = t; return; }
-    $('update-current').textContent = 'Instalada: ' + m.current; updateUrl = m.asset || m.url;
-    $('update-get').hidden = !m.newer; $('dl-get').hidden = !m.newer;
-    const text = m.newer ? `Hay una versión nueva: ${m.latest}. Pulsa «Descargar» e instálala encima; no pierdes tu configuración.` : `Tienes la versión más reciente (${m.current}).`;
-    note.textContent = text; $('dl-note').textContent = text;
-  }
-  // ---- Boton Actualizar: busca, baja el instalador oficial y lo instala encima ----
-  let upBuy = '';
+  // ---- Menu de TecLink (boton de descarga): Actualizar, Compartir y Desinstalar ----
+  let upBuy = '', armed = null;
   function upSet(text, { go = false, key = false, buy = false, bar = -1 } = {}) {
     $('up-note').textContent = text; $('up-go').hidden = !go; $('up-key-row').hidden = !key; $('up-buy').hidden = !buy;
     $('up-bar').hidden = bar < 0; if (bar >= 0) $('up-bar').firstElementChild.style.width = bar + '%';
@@ -109,26 +99,23 @@
     if (m.phase === 'installing') return upSet(`Instalando la versión ${m.latest}. TecLink se cierra y se abre solo en unos segundos.`, { bar: 100 });
     if (m.phase === 'error') { $('up-go').disabled = false; return upSet(m.message, { go: true }); }
   }
-  const openUp = open => {
-    $('up-pop').hidden = !open; $('up-open').setAttribute('aria-expanded', open);
-    if (open) { $('notif-pop').hidden = true; $('dl-pop').hidden = true; upSet('Buscando la última versión…'); api.send({ type: 'updateCheck' }); }
-  };
-  const copyLink = async () => { const url = state?.online?.downloadUrl || 'https://github.com/fuchogallery-droid/teclink/releases/latest'; try { await navigator.clipboard.writeText(url); api.toast('Enlace de descarga copiado.'); } catch { api.toast('Enlace: ' + url); } };
-  const openDl = open => { $('dl-pop').hidden = !open; $('dl-open').setAttribute('aria-expanded', open); if (open) { $('notif-pop').hidden = true; } };
-  const openUninstall = open => { $('uninstall').hidden = $('uninstall-scrim').hidden = !open; if (open) $('uninstall-no').focus(); };
-  function init(options) {
+  function updateResult() {}
+  const closeAll = except => { for (const id of ['notif-pop', 'dl-pop', 'col-pop']) if (id !== except) $(id).hidden = true; };
+  const openDl = open => { if (open) closeAll('dl-pop'); $('dl-pop').hidden = !open; $('dl-open').setAttribute('aria-expanded', open); if (!open) { $('m-update-area').hidden = true; $('m-note').textContent = ''; disarm(); } };
+  const openCol = open => { if (open) closeAll('col-pop'); $('col-pop').hidden = !open; $('col-open').setAttribute('aria-expanded', open); };
+  function disarm() { armed = null; $('m-uninstall').textContent = 'Desinstalar'; }
+  const copyLink = async () => { const url = state?.online?.downloadUrl || 'https://github.com/fuchogallery-droid/teclink/releases/latest'; const text = 'Descarga TecLink: ' + url; try { await navigator.clipboard.writeText(text); api.toast('Enlace de descarga copiado: pégalo donde quieras.'); } catch { api.toast('Enlace: ' + url); } };  function init(options) {
     api = options;
-    $('update-check').onclick = () => { $('update-check').disabled = true; $('update-check').textContent = 'Buscando…'; api.send({ type: 'checkUpdate' }); };
-    $('update-get').onclick = () => api.send({ type: 'openUrl', url: updateUrl });
-    $('up-open').onclick = () => openUp($('up-pop').hidden); $('up-close').onclick = () => openUp(false);
-    $('up-go').onclick = () => { $('up-go').disabled = true; upSet('Preparando la descarga…', { bar: 0 }); api.send({ type: 'updateApply', key: $('up-key').value.trim() }); };
-    $('up-buy').onclick = () => { if (upBuy.startsWith('https://')) api.send({ type: 'openUrl', url: upBuy }); };
     $('dl-open').onclick = () => openDl($('dl-pop').hidden); $('dl-close').onclick = () => openDl(false);
-    $('dl-check').onclick = () => { $('dl-check').disabled = true; $('dl-check').textContent = 'Buscando…'; api.send({ type: 'checkUpdate' }); };
-    $('dl-get').onclick = () => api.send({ type: 'openUrl', url: updateUrl }); $('dl-copy').onclick = copyLink;
-    $('uninstall-open').onclick = () => openUninstall(true); $('uninstall-no').onclick = () => openUninstall(false); $('uninstall-scrim').onclick = () => openUninstall(false);
-    $('uninstall-yes').onclick = () => { openUninstall(false); api.send({ type: 'uninstall' }); };
-    $('share-clipboard').onclick = () => api.send({ type: 'setClipboard', on: $('share-clipboard').getAttribute('aria-checked') !== 'true' });
+    $('col-open').onclick = () => openCol($('col-pop').hidden); $('col-close').onclick = () => openCol(false);
+    $('m-update').onclick = () => { disarm(); $('m-update-area').hidden = false; upSet('Buscando la última versión…'); api.send({ type: 'updateCheck' }); };
+    $('m-share').onclick = () => { disarm(); copyLink(); };
+    $('m-uninstall').onclick = () => {
+      if (armed) { $('m-note').textContent = 'Desinstalando… TecLink se cierra y se borra de esta PC.'; api.send({ type: 'uninstall' }); return; }
+      armed = setTimeout(disarm, 4000); $('m-uninstall').textContent = '¿Seguro? Pulsa otra vez'; $('m-note').textContent = 'Se borran los archivos de TecLink de esta PC y la ventana se cierra. Tu carpeta Descargas\\TecLink no se toca.';
+    };
+    $('up-go').onclick = () => { $('up-go').disabled = true; upSet('Preparando la descarga…', { bar: 0 }); api.send({ type: 'updateApply', key: $('up-key').value.trim() }); };
+    $('up-buy').onclick = () => { if (upBuy.startsWith('https://')) api.send({ type: 'openUrl', url: upBuy }); };    $('share-clipboard').onclick = () => api.send({ type: 'setClipboard', on: $('share-clipboard').getAttribute('aria-checked') !== 'true' });
     $('profile-pick').onclick = () => $('profile-file').click();
     $('profile-file').onchange = e => { pickPhoto(e.target.files[0]); e.target.value = ''; };
     $('profile-remove').onclick = () => { photo = ''; paint($('profile-avatar'), '', $('profile-name').value); };
@@ -137,7 +124,7 @@
     $('notif-open').onclick = () => openNotif($('notif-pop').hidden); $('notif-close').onclick = () => openNotif(false);
     $('save-room').onclick = () => api.send({ type: 'saveRoom' });
     $('rooms-check').onclick = () => { $('rooms-check').disabled = true; $('rooms-check').textContent = 'Buscando…'; api.send({ type: 'checkRooms' }); };
-    addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (!$('uninstall').hidden) openUninstall(false); else if (!$('up-pop').hidden) openUp(false); else if (!$('dl-pop').hidden) openDl(false); else if (!$('profile').hidden) openProfile(false); else if (!$('notif-pop').hidden) openNotif(false); });
+    addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (!$('dl-pop').hidden) openDl(false); else if (!$('col-pop').hidden) openCol(false); else if (!$('profile').hidden) openProfile(false); else if (!$('notif-pop').hidden) openNotif(false); });
   }
   function render(newState) {
     state = newState; renderNotifications(); renderRooms();

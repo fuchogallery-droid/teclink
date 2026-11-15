@@ -1,4 +1,4 @@
-using TecLink.Core.Protocol;
+﻿using TecLink.Core.Protocol;
 
 namespace TecLink.App;
 
@@ -29,9 +29,20 @@ public sealed partial class EdgeBridge
 
     public object ControlView() => new
     {
-        mode = RoomMode, own = OwnRoom, pending = _controlPending, iControl = _iControl,
+        mode = RoomMode, own = OwnRoom, peerOwn = IsOwnPc(_active?.Pc), pending = _controlPending, iControl = _iControl,
         asking = _askerName, controlledBy = _grantedSlot?.Name,
     };
+
+    private bool IsOwnPc(string? pc) => !string.IsNullOrEmpty(pc) && _config.OwnPcs.Contains(pc, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The owner says whether the PC that just came in is his own or somebody else's. TecLink remembers it, so next time the room sets itself.</summary>
+    public void MarkPeerAsMine(bool mine)
+    {
+        if (_config.Role != PeerRole.Server || _active?.Pc is not { Length: > 0 } pc) return;
+        _config.OwnPcs.RemoveAll(x => x.Equals(pc, StringComparison.OrdinalIgnoreCase));
+        if (mine) _config.OwnPcs.Add(pc);
+        SetRoomMode(mine ? RoomOwn : RoomPeople);
+    }
 
     /// <summary>The "Controlar PC" button.</summary>
     public void RequestControl()

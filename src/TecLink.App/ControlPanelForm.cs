@@ -314,7 +314,15 @@ public sealed class ControlPanelForm : Form
                         root.TryGetProperty("avatar", out var pAv) && pAv.ValueKind == System.Text.Json.JsonValueKind.String ? pAv.GetString() : null);
                     RefreshState();
                     break;
-                case "joinAnswer": _bridge.AnswerJoin(root.GetProperty("id").GetString() ?? "", root.GetProperty("accept").GetBoolean()); RefreshState(); break;
+                case "joinAnswer":
+                    {
+                        var accept = root.GetProperty("accept").GetBoolean();
+                        // Al aceptar, el dueño dice si es otra de sus PCs o alguien más: la sala se acomoda sola a eso.
+                        if (accept && root.TryGetProperty("own", out var ownFlag) && ownFlag.ValueKind is System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False)
+                        { var kind = ownFlag.GetBoolean() ? EdgeBridge.RoomOwn : EdgeBridge.RoomPeople; if (_bridge.RoomMode != kind) _bridge.SetRoomMode(kind); }
+                        _bridge.AnswerJoin(root.GetProperty("id").GetString() ?? "", accept); RefreshState(); break;
+                    }
+                case "peerIsMine": _bridge.MarkPeerAsMine(root.GetProperty("mine").GetBoolean()); RefreshState(); break;
                 case "saveRoom": _bridge.SaveRoom(); RefreshState(); break;
                 case "forgetRoom": _bridge.ForgetRoom(root.GetProperty("code").GetString()); RefreshState(); break;
                 case "checkRooms":

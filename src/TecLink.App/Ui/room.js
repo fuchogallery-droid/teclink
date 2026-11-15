@@ -5,6 +5,8 @@
 (() => {
   const $ = id => document.getElementById(id);
   const MIN = { card: [220, 150], bubble: [90, 90] };
+  const ICON_POP = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6M20 4l-8 8M18 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1h5"/></svg>', ICON_DOCK = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>';
+  let camSize = Math.min(320, Math.max(80, +localStorage.getItem('tecCamSize') || 112));
   let api = {}, state, store = readStore(), top = 10, signature = '', camSignature = '', active = false, docked = false, full = null, control = null, floated = { me: false, peer: false }, lastWatch = '', lastMove = 0;
   const cam = { on: false, cutout: true, mirror: true, stream: null, seg: null, segLoading: null, lastSent: 0, loop: 0 };
   const peers = {}; // una camara por persona de la sala: id -> { last, cutout, url, img }
@@ -36,8 +38,10 @@
   }
   function items() {
     const list = screens().filter(i => !layout()[i.key]?.hidden);
-    if ((!docked || floated.me) && cam.on) list.push({ key: 'cam:me', kind: 'bubble', mine: true });
-    for (const id of Object.keys(peers)) if ((!docked || floated[id]) && peerCamShown(id)) list.push({ key: 'cam:' + id, kind: 'bubble', mine: false, who: id });
+    // Camara: una tarjeta mas de la cuadricula (con el chat abierto pasa a la cuadricula del chat); si se saca, es una burbuja flotante.
+    const addCam = (who, mine) => { const kind = floated[who] ? 'bubble' : docked ? null : 'camcard'; if (kind) list.push({ key: (kind === 'bubble' ? 'cam:' : 'camc:') + who, kind, mine, who }); };
+    if (cam.on) addCam('me', true);
+    for (const id of Object.keys(peers)) if (peerCamShown(id)) addCam(id, false);
     return list;
   }
 
@@ -48,17 +52,17 @@
   }
   function place(list) {
     const W = room().clientWidth; if (!W) return false;
-    const shown = list.filter(i => i.kind === 'screen'), slot = gridSlots(shown.length, store.cols);
+    const shown = list.filter(i => i.kind !== 'bubble'), slot = gridSlots(shown.length, store.cols);
     let bubbles = 0;
     list.forEach(item => {
       if (layout()[item.key]) return;
-      if (item.kind === 'screen') layout()[item.key] = { ...slot(shown.indexOf(item)), z: ++top };
+      if (item.kind !== 'bubble') layout()[item.key] = { ...slot(shown.indexOf(item)), z: ++top };
       else layout()[item.key] = { x: Math.max(12, W - 190 - bubbles++ * 170), y: 24, w: 160, h: 160, z: ++top + 1000 };
     });
     return true;
   }
   function arrange(cols) {
-    store.cols = cols; const shown = items().filter(i => i.kind === 'screen'), slot = gridSlots(shown.length, cols);
+    store.cols = cols; const shown = items().filter(i => i.kind !== 'bubble'), slot = gridSlots(shown.length, cols);
     shown.forEach((item, i) => { layout()[item.key] = { ...layout()[item.key], ...slot(i) }; });
     save(); signature = ''; render();
   }
@@ -66,7 +70,7 @@
   // Pantalla completa de toda la sala: las tarjetas visibles se reparten TODA la ventana con la division elegida (Auto, 1, 2, 3, 4).
   let cinema = false, cinemaOnly = null, cinemaSlots = {};
   function computeCinema(list) {
-    const shown = list.filter(i => i.kind === 'screen' && (!cinemaOnly || i.key === cinemaOnly)), W = room().clientWidth, H = room().clientHeight; cinemaSlots = {};
+    const shown = list.filter(i => i.kind !== 'bubble' && (!cinemaOnly || i.key === cinemaOnly)), W = room().clientWidth, H = room().clientHeight; cinemaSlots = {};
     if (!shown.length || !W || !H) return;
     const gap = 8, cols = Math.min(shown.length, store.cols || Math.ceil(Math.sqrt(shown.length))), rows = Math.ceil(shown.length / cols);
     const w = Math.floor((W - gap * (cols + 1)) / cols), h = Math.floor((H - gap * (rows + 1)) / rows);
@@ -103,8 +107,14 @@
       node.ondblclick = e => { if (e.target.closest('button') || control === item.key) return; if (cinema) setCinema(false); else if (full === item.key) setCinema(true, item.key); else setFull(item.key); };
       wireControl(node.querySelector('.rc-img'), item);
       if (pictures[item.key]) { const img = node.querySelector('.rc-img'); img.src = pictures[item.key]; img.hidden = false; }
+    } else if (item.kind === 'camcard') {
+      node.setAttribute('role', 'group');
+      node.innerHTML = '<div class="rc-head"><div class="rc-title"><strong></strong><small>Cámara</small></div><button class="cam-pop secondary" type="button" title="Sacar a una burbuja flotante" aria-label="Sacar a una burbuja flotante">' + ICON_POP + '</button></div><div class="rc-view cam-view"><div class="cam-media"></div></div>';
+      node.querySelector('.rc-head').onpointerdown = e => { if (!e.target.closest('button')) startDrag(e, node, item.key, 'move'); };
+      node.querySelector('.cam-pop').onclick = () => setFloat(item.mine ? 'me' : item.who, true);
+      mountMedia(node.querySelector('.cam-media'), item.mine, item.who);
     } else {
-      node.innerHTML = '<div class="bubble-media"></div><div class="bubble-bar"><span class="bubble-name"></span><button class="b-minus secondary" type="button" aria-label="Más pequeña">−</button><button class="b-plus secondary" type="button" aria-label="Más grande">+</button>' + '<button class="b-dock secondary" type="button" aria-label="Volver al panel" title="Volver al panel del chat">⇲</button>' + (item.mine ? '<button class="b-off secondary" type="button" aria-label="Apagar cámara">✕</button>' : '') + '</div>';
+      node.innerHTML = '<div class="bubble-media"></div><div class="bubble-bar"><span class="bubble-name"></span><button class="b-minus secondary" type="button" aria-label="Más pequeña">−</button><button class="b-plus secondary" type="button" aria-label="Más grande">+</button>' + '<button class="b-dock secondary" type="button" aria-label="Volver a la cuadrícula" title="Volver a la cuadrícula">' + ICON_DOCK + '</button>' + (item.mine ? '<button class="b-off secondary" type="button" aria-label="Apagar cámara">✕</button>' : '') + '</div>';
       mountMedia(node.querySelector('.bubble-media'), item.mine, item.who);
       node.onpointerdown = e => { if (!e.target.closest('button,.rc-resize')) startDrag(e, node, item.key, 'move'); };
       node.querySelector('.b-minus').onclick = () => scaleBubble(item.key, node, .85);
@@ -216,6 +226,10 @@
         b('control').hidden = !item.remote || controlling; b('control').disabled = item.offline || !canSee();
         b('remove').hidden = !(item.remote && admin); b('remove').disabled = item.offline;
         b('hide').hidden = controlling;
+      } else if (item.kind === 'camcard') {
+        node.setAttribute('aria-label', item.mine ? 'Tu cámara' : 'Cámara de ' + nameOf(item.who));
+        node.querySelector('strong').textContent = item.mine ? 'Tú' : nameOf(item.who);
+        node.classList.toggle('cutout', item.mine ? cam.cutout && !!cam.seg : peerOf(item.who).cutout); node.classList.toggle('mirror', item.mine && cam.mirror);
       } else {
         node.setAttribute('aria-label', item.mine ? 'Tu cámara' : 'Cámara de ' + nameOf(item.who));
         node.querySelector('.bubble-name').textContent = item.mine ? 'Tú' : nameOf(item.who);
@@ -224,25 +238,28 @@
     }
     for (const item of list) {
       const node = room().querySelector(`[data-key="${CSS.escape(item.key)}"]`); if (!node) continue;
-      if (item.kind === 'screen') node.style.display = cinema && !cinemaSlots[item.key] ? 'none' : '';
+      if (item.kind !== 'bubble') node.style.display = cinema && !cinemaSlots[item.key] ? 'none' : '';
       if (cinema) apply(node, item.key);
     }
     video.hidden = !!(cam.cutout && cam.seg); own.hidden = !(cam.cutout && cam.seg);
     fitRoom(); syncWatch();
   }
 
+  function setCamSize(v) { camSize = Math.round(Math.min(320, Math.max(80, v))); localStorage.setItem('tecCamSize', String(camSize)); chat-cams?.style.setProperty('--cam-w', camSize + 'px'); }
   // Camaras dentro del chat acoplado: una celda por persona, siempre visibles.
   function renderCams() {
     const host = $('chat-cams'); if (!host) return;
     const people = docked ? [{ who: 'me', name: 'Tú', on: cam.on }].concat(remoteMembers().map(m => ({ who: m.id, name: m.name, on: peerCamShown(m.id) }))) : [];
     const sig = people.map(p => p.who + p.on + !!floated[p.who]).join('|');
     if (sig !== camSignature) {
-      camSignature = sig; host.replaceChildren(); host.style.setProperty('--cams', Math.max(1, people.length));
+      camSignature = sig; host.replaceChildren(); host.style.setProperty('--cams', Math.max(1, people.length)); host.style.setProperty('--cam-w', camSize + 'px');
       for (const p of people) {
         const cell = document.createElement('div'); cell.className = 'cam-cell' + (floated[p.who] && p.on ? ' is-floating' : ''); cell.dataset.who = p.who;
-        cell.innerHTML = '<div class="cam-media"></div><span class="cam-name"></span><button class="cam-float secondary" type="button"></button>';
+        cell.innerHTML = '<div class="cam-media"></div><span class="cam-name"></span><button class="cam-float secondary" type="button"></button><span class="cam-tools"><button class="cam-minus secondary" type="button" aria-label="Más pequeña">−</button><button class="cam-plus secondary" type="button" aria-label="Más grande">+</button></span>';
+        cell.querySelector('.cam-minus').onclick = () => setCamSize(camSize * .85); cell.querySelector('.cam-plus').onclick = () => setCamSize(camSize * 1.18);
+        cell.addEventListener('wheel', e => { e.preventDefault(); setCamSize(camSize * (e.deltaY < 0 ? 1.08 : .92)); }, { passive: false });
         const btn = cell.querySelector('.cam-float'), isFloating = !!floated[p.who] && p.on;
-        btn.hidden = !p.on; btn.textContent = isFloating ? '⇲' : '⇱'; btn.title = isFloating ? 'Volver al panel' : 'Sacar la cámara a una ventana flotante'; btn.setAttribute('aria-label', btn.title);
+        btn.hidden = !p.on; btn.innerHTML = isFloating ? ICON_DOCK : ICON_POP; btn.title = isFloating ? 'Volver al panel' : 'Sacar la cámara a una ventana flotante'; btn.setAttribute('aria-label', btn.title);
         btn.onclick = () => setFloat(p.who, !isFloating);
         if (p.on && !isFloating) mountMedia(cell.querySelector('.cam-media'), p.who === 'me', p.who);
         else { const off = document.createElement('span'); off.className = 'cam-off'; off.textContent = isFloating ? 'Flotando' : (p.name === 'Tú' ? state.machineName || 'Tú' : p.name).slice(0, 2).toUpperCase(); cell.querySelector('.cam-media').append(off); }
@@ -265,10 +282,6 @@
 
   function updateToolbar() {
     const set = (id, on, label) => { const b = $(id); if (!b) return; b.setAttribute('aria-checked', on); const l = b.querySelector('.sw-label'); if (l) l.textContent = label; };
-    set('cam-toggle', cam.on, `Mi cámara: ${cam.on ? 'encendida' : 'apagada'}`);
-    set('cam-cutout', cam.cutout, `Quitar fondo: ${cam.cutout ? 'sí' : 'no'}`);
-    set('cam-mirror', cam.mirror, `Espejo: ${cam.mirror ? 'sí' : 'no'}`);
-    $('cam-cutout').disabled = $('cam-mirror').disabled = !cam.on;
     document.querySelectorAll('[data-cam-cutout]').forEach(b => { b.disabled = !cam.on; b.setAttribute('aria-checked', cam.cutout); });
     document.querySelectorAll('[data-cam-mirror]').forEach(b => { b.disabled = !cam.on; b.setAttribute('aria-checked', cam.mirror); });
     document.querySelectorAll('[data-cam-switch]').forEach(b => { b.setAttribute('aria-pressed', cam.on); b.classList.toggle('on', cam.on); const l = b.querySelector('span'); if (l) l.textContent = cam.on ? 'Cámara encendida' : 'Cámara'; });
@@ -385,11 +398,8 @@
   setInterval(() => { if (state && Object.entries(peers).some(([id, p]) => p.last && !peerCamShown(id) && (signature.includes('cam:' + id) || camSignature.includes(id + 'true')))) render(); }, 1500);
   function init(options) {
     api = options;
-    $('cam-toggle').onclick = () => setCamera(!cam.on);
-    $('cam-cutout').onclick = () => { cam.cutout = !cam.cutout; if (cam.cutout) prepareCutout(); refresh(); };
-    $('cam-mirror').onclick = () => { cam.mirror = !cam.mirror; render(); };
-    document.querySelectorAll('[data-cam-cutout]').forEach(b => b.onclick = () => $('cam-cutout').click());
-    document.querySelectorAll('[data-cam-mirror]').forEach(b => b.onclick = () => $('cam-mirror').click());
+    document.querySelectorAll('[data-cam-cutout]').forEach(b => b.onclick = () => { cam.cutout = !cam.cutout; if (cam.cutout) prepareCutout(); refresh(); });
+    document.querySelectorAll('[data-cam-mirror]').forEach(b => b.onclick = () => { cam.mirror = !cam.mirror; render(); });
     document.querySelectorAll('[data-cam-switch]').forEach(b => b.onclick = () => setCamera(!cam.on));
     document.querySelectorAll('[data-cols]').forEach(b => b.onclick = () => arrange(Number(b.dataset.cols)));
     $('room-lock').onclick = () => { store.locked = !store.locked; save(); render(); api.toast(store.locked ? 'Tarjetas fijas: no se mueven hasta que toques el candado otra vez.' : 'Tarjetas liberadas: ya puedes moverlas.'); };
