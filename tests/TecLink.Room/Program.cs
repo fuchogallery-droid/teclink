@@ -142,7 +142,10 @@ Console.WriteLine("== Ganchos del sistema (se instalan y se retiran sin dejar na
         return on && off;
     });
     Check(clipOk, "el portapapeles solo se escucha cuando se enciende y deja de escucharse al apagarlo");
-    var fresh = new AppConfig();
+    // One pasted text with the code and the address of somebody on another network (Tailscale, another city)
+    var invited = OnUi<EdgeBridge>(() => { var clip = new ClipboardWatcher(); _ = clip.Handle; var cfg = new AppConfig { MachineName = "REMOTO", Role = PeerRole.Server, SessionCode = "ZZZZZZ" }; var b = new EdgeBridge(cfg, clip) { SystemEffects = false }; b.JoinSession("K7M-4QX@100.73.208.1"); return b; });
+    var inviteState = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(invited.ViewState(""))).RootElement;
+    Check(inviteState.GetProperty("joinCode").GetString() == "K7M-4QX" && inviteState.GetProperty("peerAddress").GetString() == "100.73.208.1", "una invitación «CODIGO@direccion» se separa sola en código y dirección");    var fresh = new AppConfig();
     Check(!fresh.ShareClipboard && !fresh.AutoReceive, "de fábrica no se comparte el portapapeles ni se reciben archivos solos");
 }
 

@@ -260,6 +260,8 @@
     $('host-card').classList.toggle('inactive', !host);
     if (host && (state.members || []).length > 2) $('host-status').textContent = `${state.members.length - 1} PCs conectadas a tu sala. Caben ${state.maxPeople || 10} en total, contigo.`;
     const addrs = state.addresses || [];
+    const remote = addrs.find(a => a.startsWith('100.')); // la direccion de Tailscale, alcanzable desde cualquier ciudad
+    $('copy-remote').hidden = !(host && active && remote); $('copy-remote').dataset.invite = remote ? (state.sessionCode || '').replace('-', '') + '@' + remote : '';
     $('host-address').textContent = addrs.length && active ? `Dirección de esta PC (por si la otra no la encuentra sola): ${addrs.join(' · ')}` : '';
     $('firewall-box').hidden = state.firewall !== false || !(host && active);
     if (document.activeElement !== $('join-address') && !$('join-address').value && state.peerAddress) $('join-address').value = state.peerAddress;
@@ -286,9 +288,20 @@
   }
   $('management').onclick = () => send({ type: 'setManagement', on: $('management').getAttribute('aria-checked') !== 'true' });
   $('copy-code').onclick = async () => { const code = (state?.sessionCode || '').replace('-', ''); if (!code) return; try { await navigator.clipboard.writeText(state.sessionCode); toast('Código copiado: ' + state.sessionCode); } catch { toast('Tu código es ' + state.sessionCode); } };
-  $('join-code').oninput = e => { const raw = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6); e.target.value = raw.length > 3 ? raw.slice(0, 3) + '-' + raw.slice(3) : raw; };
+  // Se acepta CODIGO o CODIGO@direccion (la invitacion para otra red): la direccion pasa sola a su casilla.
+  const pretty = raw => raw.length > 3 ? raw.slice(0, 3) + '-' + raw.slice(3) : raw;
+  $('join-code').oninput = e => {
+    const v = e.target.value;
+    if (v.includes('@')) {
+      const [c, ...rest] = v.split('@'), raw = c.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6), address = rest.join('@').trim();
+      $('join-address').value = address; document.querySelector('.join-more').open = true;
+      e.target.value = pretty(raw) + (address ? '@' + address : '@'); return;
+    }
+    const raw = v.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6); e.target.value = pretty(raw);
+  };
+  $('copy-remote').onclick = async () => { const text = $('copy-remote').dataset.invite; if (!text) return; const shown = text.slice(0, 3) + '-' + text.slice(3); try { await navigator.clipboard.writeText(shown); toast('Invitación copiada: ' + shown + '. Pégala en el campo de código de la otra PC.'); } catch { toast('Tu invitación es ' + shown); } };
   $('join-code').onkeydown = e => { if (e.key === 'Enter') $('join-btn').click(); };
-  $('join-btn').onclick = () => { const code = $('join-code').value.replace(/[^A-Za-z0-9]/g, ''); if (code.length !== 6) { toast('El código tiene 6 letras o números.'); return; } send({ type: 'session', action: 'join', code, address: $('join-address').value.trim() }); toast('Buscando la sesión en tu red…'); };
+  $('join-btn').onclick = () => { const [c, ...rest] = $('join-code').value.split('@'), code = c.replace(/[^A-Za-z0-9]/g, ''), address = (rest.join('@') || $('join-address').value).trim(); if (code.length !== 6) { toast('El código tiene 6 letras o números.'); return; } send({ type: 'session', action: 'join', code, address }); toast(address ? 'Conectando con ' + address + '…' : 'Buscando la sesión en tu red…'); };
   $('repair-run').onclick = () => { $('diag-out').hidden = false; $('diag-out').textContent = 'Reparando: si Windows pide permiso, pulsa Sí…'; send({ type: 'repair' }); };
   $('diag-run').onclick = () => { $('diag-run').disabled = true; $('diag-run').textContent = 'Probando…'; $('diag-out').hidden = false; $('diag-out').textContent = 'Revisando la red…'; send({ type: 'diagnose' }); };
   $('diag-copy').onclick = async () => { try { await navigator.clipboard.writeText($('diag-out').textContent); toast('Informe copiado. Pégalo donde te lo pidan.'); } catch { toast('Selecciona el texto del informe y cópialo.'); } };

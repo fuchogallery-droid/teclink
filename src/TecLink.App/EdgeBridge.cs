@@ -229,6 +229,8 @@ public sealed partial class EdgeBridge : IDisposable
 
     public void JoinSession(string? code, string? address = null)
     {
+        // One pasted text can carry both: ABC-DEF@100.73.208.1 (the owner's invitation for somebody on another network).
+        if (code is not null && code.Contains('@')) { var split = code.Split('@', 2); code = split[0]; if (string.IsNullOrWhiteSpace(address)) address = split[1]; }
         var clean = SessionDiscovery.Normalize(code) ?? throw new ArgumentException("El código tiene 6 letras o números. Revísalo.");
         if (SessionDiscovery.Normalize(_config.SessionCode) == clean) throw new ArgumentException("Ese es el código de esta PC. Escribe el de la otra PC.");
         address = (address ?? "").Trim();
@@ -464,7 +466,24 @@ public sealed partial class EdgeBridge : IDisposable
             try
             {
                 StatusChanged?.Invoke(guestCode is not null ? "Buscando la sesión en tu red..." : $"Conectando a {_config.PeerHost}:{_config.Port}...");
-                if (guestCode is not null)
+                // An address was given (another city, a VPN like Tailscale): go straight to it first. Searching the local network can
+                // only find PCs next to this one, and it would waste seconds here.
+                PeerConnection? direct = null;
+                if (guestCode is not null && !string.IsNullOrWhiteSpace(_config.PeerHost))
+                {
+                    var wanted = _config.PeerHost.Trim();
+                    StatusChanged?.Invoke($"Conectando con {wanted}...");
+                    try
+                    {
+                        using var quick = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                        quick.CancelAfter(TimeSpan.FromSeconds(7));
+                        direct = await PeerServer.ConnectAsync(wanted, _config.Port, quick.Token);
+                    }
+                    catch (OperationCanceledException) when (!ct.IsCancellationRequested) { Logger.Info($"{wanted} no respondió a tiempo; se busca en la red local."); }
+                    catch (Exception ex) when (ex is IOException or System.Net.Sockets.SocketException) { Logger.Info($"No se pudo conectar con {wanted}: {ex.Message}"); }
+                }
+                if (direct is not null) connection = direct;
+                else if (guestCode is not null)
                 {
                     var (host, how) = await SessionDiscovery.FindHostAsync(guestCode, _config.Port, TimeSpan.FromSeconds(6), ct);
                     if (host is not null) Logger.Info($"Sesión encontrada en {host.Address} (búsqueda {how}).");
