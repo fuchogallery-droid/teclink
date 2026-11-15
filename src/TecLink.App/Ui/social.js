@@ -102,12 +102,17 @@
   function updateResult() {}
   const closeAll = except => { for (const id of ['notif-pop', 'dl-pop', 'col-pop']) if (id !== except) $(id).hidden = true; };
   const openDl = open => { if (open) closeAll('dl-pop'); $('dl-pop').hidden = !open; $('dl-open').setAttribute('aria-expanded', open); if (!open) { $('m-update-area').hidden = true; $('m-note').textContent = ''; disarm(); } };
-  const openCol = open => { if (open) closeAll('col-pop'); $('col-pop').hidden = !open; $('col-open').setAttribute('aria-expanded', open); };
+  const colBody = () => $('col-pop').querySelector('.notif-list') || $('colors-host').querySelector('.notif-list');
+  // Tarjeta pequena de colores (la del chat): el contenido vive en la ventanita.
+  const openCol = open => { const b = colBody(); if (b && b.parentElement !== $('col-pop')) $('col-pop').appendChild(b); if (open) closeAll('col-pop'); $('col-pop').hidden = !open; $('col-open').setAttribute('aria-expanded', open); };
+  // Boton de arriba: panel completo de configuracion, con la tarjeta de colores como primera opcion.
+  const openFull = () => { closeAll(); $('col-pop').hidden = true; const b = colBody(); if (b) $('colors-host').appendChild(b); $('settings-open').click(); $('settings-drawer').scrollTop = 0; $('settings-drawer').querySelector('.drawer-body')?.scrollTo(0, 0); };
+  window.tecOpenColors = () => openCol(true);
   function disarm() { armed = null; $('m-uninstall').textContent = 'Desinstalar'; }
   const copyLink = async () => { const url = state?.online?.downloadUrl || 'https://github.com/fuchogallery-droid/teclink/releases/latest'; const text = 'Descarga TecLink: ' + url; try { await navigator.clipboard.writeText(text); api.toast('Enlace de descarga copiado: pégalo donde quieras.'); } catch { api.toast('Enlace: ' + url); } };  function init(options) {
     api = options;
     $('dl-open').onclick = () => openDl($('dl-pop').hidden); $('dl-close').onclick = () => openDl(false);
-    $('col-open').onclick = () => openCol($('col-pop').hidden); $('col-close').onclick = () => openCol(false);
+    $('col-open').onclick = openFull; $('col-close').onclick = () => openCol(false);
     $('m-update').onclick = () => { disarm(); $('m-update-area').hidden = false; upSet('Buscando la última versión…'); api.send({ type: 'updateCheck' }); };
     $('m-share').onclick = () => { disarm(); copyLink(); };
     $('m-uninstall').onclick = () => {

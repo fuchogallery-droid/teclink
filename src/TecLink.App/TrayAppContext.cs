@@ -1,4 +1,4 @@
-namespace TecLink.App;
+﻿namespace TecLink.App;
 
 public sealed class TrayAppContext : ApplicationContext
 {
@@ -210,7 +210,7 @@ public sealed class TrayAppContext : ApplicationContext
         var uninstaller = Path.Combine(AppContext.BaseDirectory, "unins000.exe");
         if (!File.Exists(uninstaller)) return false;
         // Automatico: TecLink se cierra y un instante despues el desinstalador borra todo sin preguntar otra vez (la persona ya confirmo en la ventana).
-        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/d /c \"timeout /t 2 /nobreak >nul & \"{uninstaller}\" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART\"") { UseShellExecute = false, CreateNoWindow = true }); }
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/d /c \"ping 127.0.0.1 -n 3 >nul & \"{uninstaller}\" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART\"") { UseShellExecute = false, CreateNoWindow = true }); }
         catch (System.ComponentModel.Win32Exception) { return false; }
         _clipboard.BeginInvoke(ExitApp);
         return true;
@@ -223,7 +223,7 @@ public sealed class TrayAppContext : ApplicationContext
         if (!File.Exists(installer) || string.IsNullOrEmpty(exe)) return false;
         try
         {
-            var args = $"/d /c \"timeout /t 2 /nobreak >nul & \"{installer}\" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS & start \"\" \"{exe}\"\"";
+            var args = $"/d /c \"ping 127.0.0.1 -n 3 >nul & \"{installer}\" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS & start \"\" \"{exe}\"\"";
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe", args) { UseShellExecute = false, CreateNoWindow = true });
         }
         catch (System.ComponentModel.Win32Exception) { return false; }

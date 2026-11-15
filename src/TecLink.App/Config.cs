@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using TecLink.Core.Networking;
 using TecLink.Core;
 
@@ -47,7 +47,7 @@ public sealed class AppConfig
     /// <summary>"own" = all the computers are mine (one mouse and keyboard that cross by themselves); "people" = a room with other people: chat, voice and camera, and controlling somebody's PC only if they allow it.</summary>
     public string RoomMode { get; set; } = "people";
     /// <summary>Also open this PC's room on the internet (through the online relay), so people in other cities or networks can join.</summary>
-    public bool OnlineEnabled { get; set; } = true;
+    public bool OnlineEnabled { get; set; } = false; // 0.9.7: la invitacion en linea esta retirada; solo el codigo simple
     /// <summary>Secret of this PC's online room (16 characters); it never leaves the two PCs, only a hash of it reaches the relay.</summary>
     public string OnlineSecret { get; set; } = "";
     /// <summary>Address of the online relay used to open the room, for example relay.example.com.</summary>
@@ -78,7 +78,7 @@ public sealed class AppConfig
         try
         {
             var json = File.ReadAllText(ConfigPath);
-            return JsonSerializer.Deserialize<AppConfig>(json);
+            var loaded = JsonSerializer.Deserialize<AppConfig>(json); if (loaded is not null) loaded.OnlineEnabled = false; return loaded;
         }
         catch
         {

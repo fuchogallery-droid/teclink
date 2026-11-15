@@ -245,7 +245,7 @@
     fitRoom(); syncWatch();
   }
 
-  function setCamSize(v) { camSize = Math.round(Math.min(320, Math.max(80, v))); localStorage.setItem('tecCamSize', String(camSize)); chat-cams?.style.setProperty('--cam-w', camSize + 'px'); }
+  function setCamSize(v) { camSize = Math.round(Math.min(320, Math.max(80, v))); localStorage.setItem('tecCamSize', String(camSize)); $('chat-cams')?.style.setProperty('--cam-w', camSize + 'px'); }
   // Camaras dentro del chat acoplado: una celda por persona, siempre visibles.
   function renderCams() {
     const host = $('chat-cams'); if (!host) return;
