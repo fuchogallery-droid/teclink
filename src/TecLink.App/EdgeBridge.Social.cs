@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using TecLink.Core.Networking;
 using TecLink.Core.Protocol;
 
@@ -86,13 +86,18 @@ public sealed partial class EdgeBridge
         StatusChanged?.Invoke($"{who} pide entrar a tu sala.");
     }
 
-    public void AnswerJoin(string id, bool accept)
+    public void AnswerJoin(string id, bool accept, bool? mine = null)
     {
         var slot = SlotsSnapshot().FirstOrDefault(s => s.Request?.Id == id);
         if (slot?.Request is not { } request) { StatusChanged?.Invoke("Esa solicitud ya no está activa."); return; }
         slot.Request = null;
         if (slot.Connection is null) { AddEvent($"{request.Name} ya no estaba esperando."); StatusChanged?.Invoke("Esa solicitud ya no está activa."); return; }
-        if (accept) { AddEvent($"Aceptaste a {request.Name}."); AcceptJoin(slot); }
+        if (accept)
+        {
+            // El dueno dijo si es otra de sus PCs: se recuerda antes de entrar, y la sala se acomoda sola a eso.
+            if (mine is { } isMine && !string.IsNullOrEmpty(slot.Pc)) { _config.OwnPcs.RemoveAll(x => x.Equals(slot.Pc, StringComparison.OrdinalIgnoreCase)); if (isMine) _config.OwnPcs.Add(slot.Pc); Save(); }
+            AddEvent($"Aceptaste a {request.Name}."); AcceptJoin(slot);
+        }
         else { AddEvent($"Rechazaste a {request.Name}."); Reject(slot, "El dueño de la sala no aceptó tu solicitud."); }
     }
 

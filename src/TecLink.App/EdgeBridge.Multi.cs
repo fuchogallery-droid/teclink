@@ -167,7 +167,7 @@ public sealed partial class EdgeBridge
         _ = conn.SendAsync(WireMessage.JoinResult(true));
         _ = conn.SendAsync(WireMessage.Management(active && _management));
         // La sala se acomoda sola: una PC que el dueno ya marco como suya entra en «Mis computadoras»; cualquier otra, en «Con otras personas».
-        if (_config.Role == PeerRole.Server) { var want = IsOwnPc(slot.Pc) ? RoomOwn : RoomPeople; if (NormalizeMode(_config.RoomMode) != want) { _config.RoomMode = want; Save(); } }
+        if (_config.Role == PeerRole.Server && !Joined().Any(s => !ReferenceEquals(s, slot))) { var want = IsOwnPc(slot.Pc) ? RoomOwn : RoomPeople; if (NormalizeMode(_config.RoomMode) != want) { _config.RoomMode = want; Save(); } } // con otros invitados ya dentro el modo no cambia para todos
         _ = conn.SendAsync(WireMessage.ControlMsg("mode:" + RoomMode));
         _ = SendDesktopAsync(conn);
         StatusChanged?.Invoke("Invitado conectado — enviando identificación...");
