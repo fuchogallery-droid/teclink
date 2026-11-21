@@ -441,6 +441,38 @@ finally { try { Directory.Delete(work, true); } catch (IOException) { } }
     Check(WireMessage.Decode(WireMessage.ShareFetch("abc").Encode()) is { Type: MessageType.ShareFetch, Text: "abc" }, "Share fetch round-trips");
 }
 
+// ---- Three PCs: the owner in the middle, one guest on each side, the mouse crosses to the one whose side it leaves by ----
+{
+    var host = new[] { new DisplayInfo("\\\\.\\DISPLAY1", 0, 0, 1792, 1120) };
+    var hostTwo = new[] { new DisplayInfo("\\\\.\\DISPLAY1", 0, 0, 1792, 1120), new DisplayInfo("\\\\.\\DISPLAY2", -3840, -1040, 3840, 2160) }; // a second monitor at the left
+    var guestA = new[] { new DisplayInfo("\\\\.\\DISPLAY1", 0, 0, 1920, 1080) };
+    var guestB = new[] { new DisplayInfo("\\\\.\\DISPLAY1", 0, 0, 1366, 768) };
+    foreach (var screens in new[] { host, hostTwo })
+    foreach (var side in new[] { ScreenEdge.Right, ScreenEdge.Left, ScreenEdge.Top, ScreenEdge.Bottom })
+    {
+        var placed = SpatialMap.PlaceBeside(screens, guestA, side);
+        Check(placed.Count == screens.Length + 1 && placed.Count(p => p.Remote) == 1, $"PlaceBeside puts the guest once ({side}, {screens.Length} monitors)");
+        Check(SpatialMap.Build(screens, guestA, placed).Any(r => r.TargetRemote && r.Exit == side), $"There is a route to the guest by the {side} side ({screens.Length} monitors)");
+        Check(SpatialMap.SideOf(screens, guestA, placed) == side, $"SideOf recognises the {side} side ({screens.Length} monitors)");
+    }
+    // two guests, two different sides, both reachable from the owner's own edges
+    var right = SpatialMap.PlaceBeside(host, guestA, ScreenEdge.Right);
+    var left = SpatialMap.PlaceBeside(host, guestB, ScreenEdge.Left);
+    var toA = SpatialMap.Build(host, guestA, right); var toB = SpatialMap.Build(host, guestB, left);
+    var viaRight = SpatialNavigation.Find(host[0], new Point(1791, 500), new Point(1792, 500), toA, host, guestA);
+    var viaLeftA = SpatialNavigation.Find(host[0], new Point(0, 500), new Point(-1, 500), toA, host, guestA);
+    var viaLeft = SpatialNavigation.Find(host[0], new Point(0, 500), new Point(-1, 500), toB, host, guestB);
+    var viaRightB = SpatialNavigation.Find(host[0], new Point(1791, 500), new Point(1792, 500), toB, host, guestB);
+    Check(viaRight is { Route.TargetRemote: true }, "The right edge of the owner leads to guest A");
+    Check(viaLeftA is null, "The left edge does not lead to guest A");
+    Check(viaLeft is { Route.TargetRemote: true }, "The left edge of the owner leads to guest B");
+    Check(viaRightB is null, "The right edge does not lead to guest B");
+    Check(viaLeft is not null && viaLeft.Position.X >= guestB[0].Width - SpatialNavigation.LandingInset - 2, "The cursor lands inside guest B's right side");
+    // a second guest is never put on the side already used
+    var used = SpatialMap.SideOf(host, guestA, right);
+    Check(used == ScreenEdge.Right && used != SpatialMap.SideOf(host, guestB, left), "Two guests end up on different sides");
+}
+
 // ---- TCP search (no UDP needed): a probe confirms the code without becoming a guest ----
 {
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));

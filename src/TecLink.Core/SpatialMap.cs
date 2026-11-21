@@ -76,6 +76,52 @@ public static class SpatialMap
         return Valid(fresh) ? fresh : Fresh(keepHidden: false);
     }
 
+    /// <summary>Which side of this PC's desktop a guest's screens were placed on (null when they touch none of the four sides).</summary>
+    public static ScreenEdge? SideOf(DisplayInfo[] local, DisplayInfo[] remote, IReadOnlyList<ScreenPlacement> positions)
+    {
+        var mine = positions.Where(p => !p.Remote && !p.Hidden).Select(p => (p, d: local.FirstOrDefault(d => d.Id == p.Id))).Where(v => v.d is not null).ToArray();
+        var theirs = positions.Where(p => p.Remote && !p.Hidden).Select(p => (p, d: remote.FirstOrDefault(d => d.Id == p.Id))).Where(v => v.d is not null).ToArray();
+        if (mine.Length == 0 || theirs.Length == 0) return null;
+        var lLeft = mine.Min(v => v.p.X); var lRight = mine.Max(v => v.p.X + v.d!.Width);
+        var lTop = mine.Min(v => v.p.Y); var lBottom = mine.Max(v => v.p.Y + v.d!.Height);
+        var rLeft = theirs.Min(v => v.p.X); var rRight = theirs.Max(v => v.p.X + v.d!.Width);
+        var rTop = theirs.Min(v => v.p.Y); var rBottom = theirs.Max(v => v.p.Y + v.d!.Height);
+        if (rLeft >= lRight) return ScreenEdge.Right;
+        if (rRight <= lLeft) return ScreenEdge.Left;
+        if (rTop >= lBottom) return ScreenEdge.Bottom;
+        if (rBottom <= lTop) return ScreenEdge.Top;
+        return null;
+    }
+
+    /// <summary>This PC's screens where Windows has them and a guest's screens glued to one side of them, so that the mouse can cross there.
+    /// The guest keeps its own monitors' arrangement. It is aligned with the owner's monitor that touches that side (its top, or its left).</summary>
+    public static List<ScreenPlacement> PlaceBeside(DisplayInfo[] local, DisplayInfo[] remote, ScreenEdge side)
+    {
+        var list = local.Select(d => new ScreenPlacement(d.Id, false, d.Left, d.Top)).ToList();
+        if (remote.Length == 0 || local.Length == 0) return list;
+        var left = local.Min(d => d.Left); var top = local.Min(d => d.Top);
+        var right = local.Max(d => d.Left + d.Width); var bottom = local.Max(d => d.Top + d.Height);
+        var originX = remote.Min(d => d.Left); var originY = remote.Min(d => d.Top);
+        var remoteWidth = remote.Max(d => d.Left + d.Width) - originX; var remoteHeight = remote.Max(d => d.Top + d.Height) - originY;
+        // the owner's monitor that sits on that side (the first one, if several do)
+        var edge = side switch
+        {
+            ScreenEdge.Right => local.Where(d => d.Left + d.Width == right).OrderBy(d => d.Top).First(),
+            ScreenEdge.Left => local.Where(d => d.Left == left).OrderBy(d => d.Top).First(),
+            ScreenEdge.Top => local.Where(d => d.Top == top).OrderBy(d => d.Left).First(),
+            _ => local.Where(d => d.Top + d.Height == bottom).OrderBy(d => d.Left).First(),
+        };
+        var (x, y) = side switch
+        {
+            ScreenEdge.Right => (right, edge.Top),
+            ScreenEdge.Left => (left - remoteWidth, edge.Top),
+            ScreenEdge.Top => (edge.Left, top - remoteHeight),
+            _ => (edge.Left, bottom),
+        };
+        foreach (var d in remote) list.Add(new ScreenPlacement(d.Id, true, x + d.Left - originX, y + d.Top - originY));
+        return list;
+    }
+
     public static List<ScreenRoute> Build(DisplayInfo[] local, DisplayInfo[] remote, IReadOnlyList<ScreenPlacement> allPositions)
     {
         var hidden = allPositions.Where(p => p.Hidden).Select(p => (p.Id, p.Remote)).ToHashSet();

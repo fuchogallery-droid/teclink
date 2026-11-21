@@ -36,6 +36,9 @@ public sealed class AppConfig
     public string Theme { get; set; } = "system";
     public bool UseSpatialMap { get; set; }
     public List<ScreenPlacement> ScreenPositions { get; set; } = new();
+    /// <summary>Host with several guests: where each guest's screens sit in the map (only its own screens, Remote = true), by PC name.
+    /// The mouse crosses to the guest whose side of this PC it leaves by; the active guest's map lives in <see cref="ScreenPositions"/>.</summary>
+    public Dictionary<string, List<ScreenPlacement>> GuestMaps { get; set; } = new();
     /// <summary>Windows scale 1–20; 0 = never chosen in TecLink, keep what Windows has.</summary>
     public int PointerSpeedLevel { get; set; }
     public string CursorStyle { get; set; } = "system";

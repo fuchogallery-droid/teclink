@@ -1318,6 +1318,21 @@ public sealed partial class EdgeBridge : IDisposable
             }
             return;
         }
+        // With several guests: leaving by the side that belongs to another guest makes that guest the active one and crosses to it.
+        if (transition is null && _config.Role == PeerRole.Server && _config.AutomaticSwitching && ManagementAllowed && (OwnRoom || _iControl) && !Cooling())
+        {
+            foreach (var guest in Joined().Where(s => s.Known && !ReferenceEquals(s, _active)))
+            {
+                var routes = RoutesToGuest(guest);
+                if (routes is null) continue;
+                var other = SpatialNavigation.Find(source, previous, candidate, routes, local, guest.Displays);
+                if (other is null || !other.Route.TargetRemote) continue;
+                e.Suppress = true;
+                SwitchActive(guest);
+                EngageRemote(previous.X, previous.Y, other.Position.X, other.Position.Y);
+                return;
+            }
+        }
         _lastLocalPoint = ClampTo(source.Bounds, candidate);
         if (!source.Bounds.Contains(candidate)) { e.Suppress = true; InputInjector.MoveTo(_lastLocalPoint.Value.X, _lastLocalPoint.Value.Y); }
     }
@@ -1348,6 +1363,7 @@ public sealed partial class EdgeBridge : IDisposable
         _ = SpatialMap.Build(LocalDisplays(), _remoteDisplays, positions);
         var previous = (_config.ScreenPositions, _config.UseSpatialMap, _config.AutomaticSwitching, _config.Theme);
         _config.ScreenPositions = positions; _config.UseSpatialMap = true; _config.AutomaticSwitching = automatic;
+        if (_config.Role == PeerRole.Server && _active is { } activeGuest) SaveGuestMap(activeGuest); // the arrangement belongs to this guest
         _config.Theme = theme is "dark" or "light" ? theme : "system";
         try { _config.Save(); }
         catch { (_config.ScreenPositions, _config.UseSpatialMap, _config.AutomaticSwitching, _config.Theme) = previous; throw; }

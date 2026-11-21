@@ -184,6 +184,55 @@ public sealed partial class EdgeBridge
         _clipboard.BeginInvoke(() => SwitchActive(target));
     }
 
+    // ---- Several guests, one map each: the host's mouse crosses to the guest whose side it leaves by ----
+    private static string GuestKey(PeerSlot s) => s.Pc.Length > 0 ? s.Pc : s.Name;
+
+    /// <summary>Remembers where this guest's screens are in the map (called before another guest becomes the active one, and when the map is saved).</summary>
+    private void SaveGuestMap(PeerSlot guest)
+    {
+        var mine = _config.ScreenPositions.Where(p => p.Remote && guest.Displays.Any(d => d.Id == p.Id)).ToList();
+        if (mine.Count > 0) _config.GuestMaps[GuestKey(guest)] = mine;
+    }
+
+    /// <summary>This PC's placements (as they are now) plus the guest's: its saved place, or glued to the first side nobody else uses.</summary>
+    private List<ScreenPlacement> GuestPlacements(PeerSlot guest)
+    {
+        var local = LocalDisplays();
+        var mine = _config.ScreenPositions.Where(p => !p.Remote && local.Any(d => d.Id == p.Id)).GroupBy(p => p.Id).Select(g => g.First()).ToList();
+        if (mine.Count == local.Length && _config.GuestMaps.TryGetValue(GuestKey(guest), out var saved)
+            && guest.Displays.Length > 0 && guest.Displays.All(d => saved.Any(p => p.Id == d.Id)))
+        {
+            var combined = mine.Concat(saved.Where(p => guest.Displays.Any(d => d.Id == p.Id))).ToList();
+            try { _ = SpatialMap.Build(local, guest.Displays, combined); return combined; } catch (ArgumentException) { /* the guest's screens changed: place it again */ }
+        }
+        return guest.Displays.Length == 0 ? mine : SpatialMap.PlaceBeside(local, guest.Displays, FreeSideFor(guest));
+    }
+
+    /// <summary>The first side (right, left, top, bottom) of this PC not already taken by another guest's saved place.</summary>
+    private ScreenEdge FreeSideFor(PeerSlot guest)
+    {
+        var local = LocalDisplays();
+        var localPlaced = local.Select(d => new ScreenPlacement(d.Id, false, d.Left, d.Top)).ToList();
+        var taken = new HashSet<ScreenEdge>();
+        foreach (var other in Joined().Where(s => !ReferenceEquals(s, guest) && s.Displays.Length > 0))
+            if (_config.GuestMaps.TryGetValue(GuestKey(other), out var saved) && SpatialMap.SideOf(local, other.Displays, localPlaced.Concat(saved).ToList()) is { } side)
+                taken.Add(side);
+        foreach (var side in new[] { ScreenEdge.Right, ScreenEdge.Left, ScreenEdge.Top, ScreenEdge.Bottom })
+            if (!taken.Contains(side)) return side;
+        return ScreenEdge.Right;
+    }
+
+    /// <summary>The routes from this PC's screens to another guest's, as they were arranged for it (null if that map is not valid).</summary>
+    private List<ScreenRoute>? RoutesToGuest(PeerSlot guest)
+    {
+        try
+        {
+            var local = LocalDisplays();
+            return SpatialMap.Build(local, guest.Displays, GuestPlacements(guest));
+        }
+        catch (ArgumentException) { return null; }
+    }
+
     private void SwitchActive(PeerSlot target)
     {
         if (target.Connection is not { } conn || !target.Known) return;
@@ -195,12 +244,12 @@ public sealed partial class EdgeBridge
         ViewerCloseRequested?.Invoke();
         // The previous guest must not be left with a mouse that wants to cross into a PC that is no longer wired to it.
         if (old is { Connection: { } oc } && !ReferenceEquals(old, target)) { _ = oc.SendAsync(WireMessage.Management(false)); _ = oc.SendAsync(WireMessage.Yield()); }
+        // Each guest keeps its own place in the map: the previous one is remembered, the new one gets its saved place
+        // (or a free side of this PC), so the mouse can later cross to either of them by its edge.
+        if (old is not null && !ReferenceEquals(old, target)) SaveGuestMap(old);
         lock (_slotLock) _active = target;
-        if (_config.ScreenPositions.Any(p => p.Remote))
-        {
-            _config.ScreenPositions = _config.ScreenPositions.Where(p => !p.Remote).ToList();
-            try { _config.Save(); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Logger.LogError(ex); }
-        }
+        _config.ScreenPositions = GuestPlacements(target);
+        try { _config.Save(); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Logger.LogError(ex); }
         _spatialValid = false; _spatialLocal = new(); _spatialRemote = new(); _activeRoute = null; _lastLocalPoint = null;
         if (LocalDisplays().Length + target.Displays.Length > MaxScreens)
         {
