@@ -53,9 +53,10 @@ public sealed class TrayAppContext : ApplicationContext
         _powerItem.Click += (_, _) => SetPower(!_bridge.Powered);
         menu.Items.Insert(0, _powerItem);
 
-        // No network at all until the user opens a session or joins one.
+        // The network starts with the app: a host listens and answers searches right away,
+        // a guest keeps looking for its session. (0.6.5 removed this and nothing could connect.)
         _bridge.InstallHooks();
-        _clipboard.BeginInvoke(ShowPanel);
+        _clipboard.BeginInvoke(() => { StartNetworking(); ShowPanel(); });
     }
 
     private ToolStripMenuItem _powerItem = null!;
