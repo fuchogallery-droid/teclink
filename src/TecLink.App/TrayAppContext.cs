@@ -109,7 +109,7 @@ public sealed class TrayAppContext : ApplicationContext
         if (!on) _bridge.AnnounceLeave();
         _bridge.Powered = on;
         _powerItem.Checked = on;
-        if (!on) StopNetworking(); // on: stays disconnected, the user decides when to connect
+        if (!on) StopNetworking(); else RestartNetworking(); // on: reconnects by itself (host listens, guest searches)
         _bridge.RefreshSystemEffects();
         OnControlChanged(on ? "TecLink encendido" : "TecLink apagado");
         _panel?.RefreshState();
