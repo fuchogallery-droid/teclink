@@ -28,6 +28,7 @@ public sealed partial class EdgeBridge
         else
         {
             var mine = focusId is null ? Array.Empty<int>() : new[] { Array.FindIndex(screens, s => s.DeviceName == focusId) };
+            _tilesLocal.Pause = () => _mode == BridgeMode.Remote || _peerControlling;
             _tilesLocal.Start(mine, maxWidth, (index, jpeg) =>
             {
                 var all = Screen.AllScreens;
@@ -49,6 +50,7 @@ public sealed partial class EdgeBridge
         if (!int.TryParse(text[..split], out var width)) return;
         var indices = text[(split + 1)..].Split(',', StringSplitOptions.RemoveEmptyEntries).Select(s => int.TryParse(s, out var n) ? n : -1).Where(n => n >= 0).Take(MaxScreens).ToArray();
         if (indices.Length == 0) { _tilesForPeer.Stop(); return; }
+        _tilesForPeer.Pause = () => _mode == BridgeMode.Remote || _peerControlling;
         _tilesForPeer.Start(indices, width, (index, jpeg) =>
         {
             var screen = Screen.AllScreens.ElementAtOrDefault(index);

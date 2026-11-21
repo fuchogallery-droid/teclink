@@ -13,6 +13,10 @@ internal sealed class ScreenTiles : IDisposable
 
     public bool Active => _cts is not null;
 
+    /// <summary>While this says true (the mouse is crossing between PCs) nothing is captured or sent:
+    /// a big picture on the same link would make the pointer wait behind it.</summary>
+    public Func<bool>? Pause { get; set; }
+
     /// <param name="indices">Monitors to show (index into Screen.AllScreens); empty = all of them.</param>
     public void Start(int[] indices, int maxWidth, Func<int, byte[], Task> sink)
     {
@@ -22,6 +26,8 @@ internal sealed class ScreenTiles : IDisposable
         _ = Task.Run(() => RunAsync(indices, maxWidth, sink, cts.Token));
     }
 
+    private bool Paused() { try { return Pause?.Invoke() == true; } catch (Exception) { return false; } }
+
     public void Stop()
     {
         var cts = Interlocked.Exchange(ref _cts, null);
@@ -30,7 +36,7 @@ internal sealed class ScreenTiles : IDisposable
         cts.Dispose();
     }
 
-    private static async Task RunAsync(int[] indices, int maxWidth, Func<int, byte[], Task> sink, CancellationToken ct)
+    private async Task RunAsync(int[] indices, int maxWidth, Func<int, byte[], Task> sink, CancellationToken ct)
     {
         var hashes = new Dictionary<int, (ulong Hash, long At)>();
         var samples = new Dictionary<int, (ulong Hash, long At)>();
@@ -43,6 +49,7 @@ internal sealed class ScreenTiles : IDisposable
         {
             while (!ct.IsCancellationRequested)
             {
+                if (Paused()) { await Task.Delay(150, ct); continue; }
                 var started = Environment.TickCount64;
                 var screens = Screen.AllScreens;
                 var wanted = indices.Length == 0 ? Enumerable.Range(0, screens.Length) : indices.Where(i => i >= 0 && i < screens.Length);
